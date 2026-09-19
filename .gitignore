@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+node_modules/
+.next/
+playwright-report/
+test-results/
+postgres_data/
