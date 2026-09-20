@@ -138,6 +138,10 @@ it('adds every layer in the documented order', () => {
   fire('style.load')
 
   expect(addedLayers.map((layer) => layer.id)).toEqual(Object.values(LAYER_IDS))
+  expect(addedLayers).toHaveLength(5)
+  // Cieplo idzie na spod, obrysy budynkow nad nie: MapLibre rysuje w kolejnosci dodawania.
+  const ids = addedLayers.map((layer) => layer.id)
+  expect(ids.indexOf(LAYER_IDS.outline)).toBeGreaterThan(ids.indexOf(LAYER_IDS.density))
 })
 
 it('selects the clicked building', () => {
@@ -151,14 +155,27 @@ it('selects the clicked building', () => {
   expect(onSelect).toHaveBeenCalledWith(42)
 })
 
-it('selects the building behind a listed point', () => {
+// MVT potrafi oddac identyfikator jako napis, a /api/buildings/{id} przyjmuje liczbe.
+it('passes a string feature id on as a number', () => {
   const onSelect = vi.fn()
   render(<MapView selectedId={null} onSelect={onSelect} />)
   fire('style.load')
-  hits = [{ id: '7', layer: { id: LAYER_IDS.points } }]
+  hits = [{ id: '7', layer: { id: LAYER_IDS.fill } }]
   fire('click')
 
   expect(onSelect).toHaveBeenCalledWith(7)
+})
+
+// Komorka siatki gestosci nie jest budynkiem i nie ma identyfikatora, wiec nie moze byc celem
+// klikniecia ani zmieniac kursora na „klikalny" — inaczej mapa obiecywalaby karte budynku,
+// ktorej nie ma.
+it('never queries the density grid and never puts a pointer cursor over it', () => {
+  render(<MapView />)
+  fire('style.load')
+  fire('click')
+
+  expect(queries[0][1]).toEqual({ layers: [LAYER_IDS.fill] })
+  expect(handlers.filter((entry) => entry.layer === LAYER_IDS.density)).toHaveLength(0)
 })
 
 it('clears the selection when the click hits no feature', () => {

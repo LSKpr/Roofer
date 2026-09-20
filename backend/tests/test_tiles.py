@@ -6,9 +6,13 @@ from app.config import Settings
 from app.dataversion import tile_etag
 from app.main import create_app
 from app.tiles import (
+    DENSITY_COUNT,
+    DENSITY_GRID,
+    DENSITY_LAYER,
+    DENSITY_MIN_ZOOM,
+    DENSITY_TILE,
     FEATURE_ID,
-    POINT_MIN_ZOOM,
-    POINT_TILE,
+    POLYGON_LAYER,
     POLYGON_MIN_ZOOM,
     POLYGON_TILE,
     tile_sql,
@@ -49,30 +53,113 @@ def test_close_zoom_serves_building_outlines() -> None:
     assert tile_sql(POLYGON_MIN_ZOOM) is POLYGON_TILE
 
 
-def test_middle_zoom_serves_only_centroids_of_listed_buildings() -> None:
-    assert tile_sql(POLYGON_MIN_ZOOM - 1) is POINT_TILE
-    assert tile_sql(POINT_MIN_ZOOM) is POINT_TILE
+def test_middle_zoom_serves_the_density_grid() -> None:
+    assert tile_sql(POLYGON_MIN_ZOOM - 1) is DENSITY_TILE
+    assert tile_sql(DENSITY_MIN_ZOOM) is DENSITY_TILE
 
 
 def test_far_zoom_serves_nothing() -> None:
-    assert tile_sql(POINT_MIN_ZOOM - 1) is None
+    assert tile_sql(DENSITY_MIN_ZOOM - 1) is None
 
 
-def test_both_tiles_carry_osm_id_as_the_feature_identifier() -> None:
+def test_the_zoom_thresholds_did_not_move() -> None:
+    # Siatka gestosci zastapila centroidy w tym samym zakresie zoomow: od 14 obrysy, 8-13 gestosc.
+    # Prog w kodzie jest zdublowany w podpowiedzi na mapie, wiec jego zmiana nie jest szczegolem.
+    assert (DENSITY_MIN_ZOOM, POLYGON_MIN_ZOOM) == (8, 14)
+
+
+def test_the_polygon_tile_carries_osm_id_as_the_feature_identifier() -> None:
     """Identyfikatorem obiektu jest osm_id: klucz z sekwencji nie przezywa ponownego importu, wiec
     kafel z cache przegladarki wskazywal budynki, ktorych w bazie juz nie ma."""
-    for query in (POLYGON_TILE, POINT_TILE):
-        assert f"b.osm_id::bigint AS {FEATURE_ID}" in query
-        assert "b.id" not in query  # wewnetrzny klucz nie ma prawa wyjsc na kafel
+    assert f"b.osm_id::bigint AS {FEATURE_ID}" in POLYGON_TILE
+    assert "b.id" not in POLYGON_TILE  # wewnetrzny klucz nie ma prawa wyjsc na kafel
 
 
 def test_the_feature_identifier_is_integer_and_named_the_way_st_asmvt_is_asked() -> None:
     """Dwa ciche sposoby, zeby kafel stracil identyfikatory obiektow: kolumna niecalkowita
     (PostGIS traktuje ja wtedy jako zwykly atrybut) albo inna nazwa kolumny niz podana
     w ST_AsMVT. Oba konczyly by sie kaflem, ktory wyglada dobrze, a nie da sie w niego kliknac."""
-    for query in (POLYGON_TILE, POINT_TILE):
-        assert f"::bigint AS {FEATURE_ID}" in query
-        assert f"'geom', '{FEATURE_ID}')" in query
+    assert f"::bigint AS {FEATURE_ID}" in POLYGON_TILE
+    assert f"'geom', '{FEATURE_ID}')" in POLYGON_TILE
+
+
+def test_the_polygon_tile_still_sends_untouched_building_outlines() -> None:
+    """Zmiana dotyczy wylacznie oddalonej mapy. Kafel obrysow ma zostac dokladnie taki, jaki byl:
+    warstwa `buildings`, atrybuty `listed` i `area_m2`, bez sladu agregacji."""
+    assert f"'{POLYGON_LAYER}', 4096, 'geom', '{FEATURE_ID}'" in POLYGON_TILE
+    assert "(b.registry_matches > 0) AS listed" in POLYGON_TILE
+    assert "round(b.area_m2::numeric)::int AS area_m2" in POLYGON_TILE
+    assert "ST_SnapToGrid" not in POLYGON_TILE
+    assert "GROUP BY" not in POLYGON_TILE
+
+
+def test_the_density_tile_aggregates_in_postgis_instead_of_sending_centroids() -> None:
+    """Sedno zmiany: z oddalonej mapy leci siatka gestosci, a nie 319 869 centroidow.
+
+    Bez agregacji kafel z8 wazyl 815 371 bajtow i heatmape musialaby policzyc przegladarka
+    ze 150 tysiecy punktow — PostGIS robi to raz i oddaje gotowa wage komorki."""
+    assert "ST_SnapToGrid" in DENSITY_TILE
+    assert "GROUP BY" in DENSITY_TILE
+    assert f'count(*)::int AS "{DENSITY_COUNT}"' in DENSITY_TILE
+    assert "b.registry_matches > 0" in DENSITY_TILE  # liczymy zgloszone, a nie wszystkie budynki
+
+
+def test_the_density_layer_has_a_new_name_so_the_old_frontend_cannot_misread_it() -> None:
+    """Nazwa warstwy zmieniona z `listed` celowo: w kaflu nie ma juz budynkow, tylko komorki
+    siatki. Pod stara nazwa stary frontend kliknalby w komorke i zapytal o budynek o numerze,
+    ktorego nie ma."""
+    assert DENSITY_LAYER == "listed_density"
+    assert f"ST_AsMVT(feature.*, '{DENSITY_LAYER}', 4096, 'geom')" in DENSITY_TILE
+    assert "'listed', 4096" not in DENSITY_TILE
+
+
+def test_the_density_cell_carries_only_the_count() -> None:
+    # `count` to waga heatmapy po stronie frontendu, wiec nazwa atrybutu jest czescia kontraktu.
+    assert DENSITY_COUNT == "count"
+    assert f'cell."{DENSITY_COUNT}"' in DENSITY_TILE
+
+
+def test_the_density_features_have_no_identifier() -> None:
+    """Komorka siatki nie jest budynkiem, wiec nie ma czego adresowac. Identyfikator w tej warstwie
+    zaprosilby frontend do zapytania /api/buildings/{id} o obiekt, ktory nie istnieje — dlatego
+    ST_AsMVT jest tu wolany BEZ piatego argumentu."""
+    assert f"'geom', '{FEATURE_ID}')" not in DENSITY_TILE
+    assert "osm_id" not in DENSITY_TILE
+    assert f"AS {FEATURE_ID}" not in DENSITY_TILE
+
+
+def test_the_density_grid_is_glued_to_the_tile_grid() -> None:
+    """Rozmiar komorki liczony z szerokosci TEGO kafla, wiec dzieli ja bez reszty i granice komorek
+    pokrywaja sie z granicami kafla. Siatka zaczepiona gdziekolwiek indziej dawalaby komorki lezace
+    na dwoch kaflach naraz — czyli szwy i podwojne liczenie na granicach."""
+    assert f"(ST_XMax(bounds.mercator) - ST_XMin(bounds.mercator)) / {DENSITY_GRID} AS cell_m" in DENSITY_TILE
+    assert "ST_Transform(b.centroid, 3857)" in DENSITY_TILE  # siatka metryczna, a nie stopniowa
+
+
+def test_the_density_grid_snaps_to_cell_centres_not_corners() -> None:
+    """ST_SnapToGrid zaokragla do najblizszego wezla, wiec siatke zaczepiamy o POL komorki i wezel
+    wypada w srodku komorki. Bez tego przesuniecia cala gestosc pojechalaby o pol komorki na
+    polnocny zachod, a przy krawedzi kafla wyszlaby poza jego zakres."""
+    assert "grid.corner_x + grid.cell_m / 2" in DENSITY_TILE
+    assert "grid.corner_y + grid.cell_m / 2" in DENSITY_TILE
+
+
+def test_the_density_tile_clips_its_input_exactly_and_from_one_side() -> None:
+    """Krawedzie kafli. `&&` porownuje obwiednie zapamietane w float4 i zaokraglone na zewnatrz,
+    wiec wpuszcza punkty tuz zza krawedzi: zmierzone kafle z8, z9 i z11 mialy przez to po jednym
+    zgloszeniu za duzo, policzonym drugi raz takze u sasiada. Dlatego o przynaleznosci decyduje
+    porownanie wspolrzednych, a zakres jest polotwarty — dwa sasiednie kafle maja wspolna krawedz
+    co do bitu i domkniety z obu stron liczylby centroid na krawedzi dwa razy."""
+    assert "ST_X(b.centroid) >= grid.lon_min AND ST_X(b.centroid) < grid.lon_max" in DENSITY_TILE
+    assert "ST_Y(b.centroid) >= grid.lat_min AND ST_Y(b.centroid) < grid.lat_max" in DENSITY_TILE
+    assert "b.centroid && grid.wgs84" in DENSITY_TILE  # zostaje dla indeksu GiST, nie dla wyniku
+
+
+def test_the_cell_lands_on_a_whole_mvt_coordinate() -> None:
+    """Kafel ma 4096 jednostek na bok i wspolrzedne w MVT sa calkowite. Gdyby DENSITY_GRID nie
+    dzielilo 4096, srodki komorek zaokraglaloby raz w dol, raz w gore i siatka bylaby nierowna."""
+    assert 4096 % DENSITY_GRID == 0
+    assert (4096 // DENSITY_GRID) % 2 == 0  # pol komorki tez musi byc calkowite
 
 
 def test_grid_rejects_coordinates_outside_the_zoom_level() -> None:

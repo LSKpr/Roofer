@@ -56,7 +56,7 @@ każdy nowy adres (preview, telefon w sieci lokalnej, deploy) wymagałby dopisan
 | Trasa | Co robi |
 | --- | --- |
 | `GET /api/health` | trzy stany bazy; 503, gdy nie ma bazy albo PostGIS-a |
-| `GET /api/tiles/buildings/{z}/{x}/{y}.mvt` | kafle `ST_AsMVT`; od zoomu 14 obrysy, 8–13 centroidy zgłoszonych, niżej 204 |
+| `GET /api/tiles/buildings/{z}/{x}/{y}.mvt` | kafle `ST_AsMVT`; od zoomu 14 obrysy (`buildings`), 8–13 siatka gęstości (`listed_density`), niżej 204 |
 | `GET /api/buildings/{id}` | dane budynku + dopasowane rekordy rejestru z udziałami |
 | `GET /api/buildings/{id}/analysis` | ocena pokrycia dachu; `source` mówi, czy to model, atrapa, czy brak wyniku |
 | `GET /api/buildings/{id}/roof.png` | kwadratowy wycinek ortofoto z marginesem (`size` 128–1024) |
@@ -127,9 +127,31 @@ Nie zaczynaj fazy, której właściciel nie nazwał.
 Poza fazami doszły: trzy podkłady z przełącznikiem (OSM, ortofoto GUGiK, CARTO Positron),
 wyszukiwanie miejscowości przez Nominatim, rysowanie prostokąta bez biblioteki, nowy język wizualny.
 
-**Zaległość z listy życzeń właściciela:** heatmapa skupisk rejestru przy oddaleniu mapy. Była wybrana
-razem ze skanem obszaru i ortofoto, ale nie powstała — punkty zgłoszonych przy zoomie 8–13 to nie to
-samo. Nie usuwaj tego wpisu, dopóki funkcja nie istnieje albo właściciel jej nie odwoła.
+## Heatmapa zagęszczenia zgłoszeń (zoomy 8–13)
+
+Warstwa `listed_density` w kaflu to **siatka**, nie budynki: punkt w środku komórki z jedynym
+atrybutem `count`. Obiekty **nie mają identyfikatora**, a warstwa nie jest klikalna — komórka nie
+jest budynkiem, więc klik w ciepło nie ma o co zapytać. Klikanie działa dopiero na obrysach od
+zoomu 14.
+
+Powód agregacji jest zmierzony, nie estetyczny: surowe centroidy dawały kafel z8 o wadze
+**815 371 B generowany 1,1 s** (319 869 zgłoszonych w województwie), a po agregacji **15 882 B
+w 0,19 s** — 51× mniej danych, przy 1 009 komórkach zamiast 48 tys. punktów. Cena jest jawna: samo
+zapytanie na z8 zwolniło (~110 → ~250 ms), bo grupowanie kosztuje więcej niż wyrzucenie punktów.
+
+Komórka to szerokość kafla / 64, liczona z obwiedni kafla, więc dzieli go bez reszty i ma stale
+64 jednostki MVT (~4 px) na każdym zoomie. Siatka jest zaczepiona o **pół komórki**, żeby
+`ST_SnapToGrid` dawał środek, a nie róg — inaczej cała gęstość przesuwa się o pół komórki na
+północny zachód. Przynależność centroidu do kafla rozstrzyga porównanie współrzędnych w zakresie
+**półotwartym** `[min, max)`, a nie operator `&&`: `&&` porównuje obwiednie zapamiętane we `float4`
+zaokrąglonym na zewnątrz i wpuszczał jeden budynek zza krawędzi, który sąsiedni kafel liczył drugi
+raz. Pilnują tego dwa testy: suma `count` w kaflu równa się liczbie zgłoszonych o centroidzie w tym
+kaflu (sprawdzane na sześciu zoomach), a suma czterech kafli z+1 równa się sumie rodzica.
+
+**Do kalibracji na żywej mapie** (dziś szacunki, opisane w `frontend/src/map/layers.ts`): górny próg
+wagi `count = 40`, waga minimalna 0,15, promień 12→26 px i intensywność 0,6→1,8 dla zoomów 8→13.
+Przy z8 komórka to ~1,5 km i większość zamieszkanych komórek przebija próg, więc kontrast niesie
+wtedy liczba niepustych komórek, a nie ich waga.
 
 ## Ocena pokrycia dachu (P5)
 

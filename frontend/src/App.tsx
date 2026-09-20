@@ -35,7 +35,7 @@ function focusOn(place: Place): MapFocus {
     const [south, west, north, east] = place.bbox
     return { kind: 'bounds', bounds: [west, south, east, north] }
   }
-  // Adres bez prostokata: zoom 16 daje obrysy dachow, a nie same punkty.
+  // Adres bez prostokata: zoom 16 daje obrysy dachow, a nie sama heatmape zageszczenia.
   return { kind: 'point', center: [place.lng, place.lat], zoom: 16 }
 }
 

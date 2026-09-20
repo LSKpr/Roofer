@@ -9,10 +9,12 @@ it('says nothing when outlines are on screen', () => {
   expect(screen.queryByText(/Przybliż/)).toBeNull()
 })
 
-it('explains that only listed buildings are visible as points', () => {
+it('explains that the heat shows density of reports, not single buildings', () => {
   render(<ZoomHint zoom={POLYGON_MIN_ZOOM - 1} />)
 
-  expect(screen.getByText(/punkty budynków zgłoszonych/)).toBeDefined()
+  // „Punkty budynkow" byloby teraz nieprawda: kafel niesie komorki siatki z liczba zgloszen,
+  // a nie pojedyncze dachy, wiec klikniecie w cieplo nie wskazuje zadnego budynku.
+  expect(screen.getByText(/zagęszczenie zgłoszeń w rejestrze, nie pojedyncze budynki/)).toBeDefined()
 })
 
 it('asks for more zoom when the map serves nothing at all', () => {

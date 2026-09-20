@@ -45,8 +45,13 @@ CACHE_TTL_S = 5.0
 #
 # 1 — identyfikator obiektu to klucz `id` z sekwencji bazy (stan do 2026-09-21),
 # 2 — identyfikator obiektu to `osm_id`, bo klucz z sekwencji nie przezywa ponownego importu
-#     (pulapka 21 w AGENTS.md) i klik w budynek z kafla w cache konczyl sie 404.
-TILE_SCHEMA_VERSION = 2
+#     (pulapka 21 w AGENTS.md) i klik w budynek z kafla w cache konczyl sie 404,
+# 3 — zoomy 8-13 nie niosa juz centroidow zgloszonych budynkow (warstwa `listed`), tylko siatke
+#     gestosci: warstwa `listed_density`, jeden punkt na komorke z atrybutem `count` i bez
+#     identyfikatora obiektu. Dane sie nie zmienily, wiec bez tego skladnika przegladarka
+#     dostalaby 304 na kafel ze stara warstwa i heatmapa nie pojawilaby sie az do wygasniecia
+#     jej cache'a.
+TILE_SCHEMA_VERSION = 3
 
 
 def new_token() -> str:

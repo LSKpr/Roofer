@@ -1,13 +1,12 @@
+import { HEATMAP_RAMP_COLORS, POLYGON_MIN_ZOOM, STATUS_COLORS } from '../map/layers'
+
 /**
- * Kolory statusow trzymamy w stalych, zeby probka w legendzie nie rozjechala sie z mapa.
- * Wartosci sa te same, co tokeny `--color-listed` i `--color-not-listed` w index.css:
- * czerwien redakcyjna, nie ostrzegawcza, i szarosc — nigdy zielen.
- *
- * TODO: po scaleniu wziac te kolory z STATUS_COLORS w src/map/layers.ts — warstwy mapy maja
- * jeszcze stara palete (#EF4444 / #64748B) i trzeba ja zrownac z tokenami.
+ * Kolory probek bierzemy z warstw mapy (`src/map/layers.ts`), a nie z wlasnych hexow — inaczej
+ * legenda tlumaczylaby kolory, ktorych na mapie juz nie ma. Tam tez stoi powod, dla ktorego hexy
+ * sa zdublowane wobec tokenow `--color-listed` i `--color-not-listed`: MapLibre nie czyta CSS.
  */
-export const LISTED_COLOR = '#c8102e'
-export const NOT_LISTED_COLOR = '#9aa5ad'
+export const LISTED_COLOR = STATUS_COLORS.listed
+export const NOT_LISTED_COLOR = STATUS_COLORS.notListed
 
 type LegendProps = { className?: string }
 
@@ -36,13 +35,39 @@ export function Legend({ className }: LegendProps) {
           Niezgłoszony
         </li>
       </ul>
+
+      {/*
+        Pasek rampy jest z plaskich pol, nie z gradientu CSS: gradienty sa poza jezykiem wizualnym,
+        a kolory i tak pochodza z tej samej stalej co warstwa mapy.
+      */}
+      <div className="mt-4 border-t border-hairline pt-4">
+        <h3 className="label-micro">Zagęszczenie zgłoszeń po oddaleniu</h3>
+        <div data-testid="legend-heat-ramp" className="mt-2 flex border border-hairline">
+          {HEATMAP_RAMP_COLORS.map((color) => (
+            <span key={color} data-testid="legend-heat-step" className="h-2 flex-1" style={{ backgroundColor: color }} />
+          ))}
+        </div>
+        <div className="mt-1 flex justify-between">
+          <span className="label-micro">Pojedyncze zgłoszenia</span>
+          <span className="label-micro">Skupisko</span>
+        </div>
+        <p className="mt-2 text-xs text-ink-muted">
+          Intensywność koloru to zagęszczenie budynków zgłoszonych w rejestrze GeoAzbest — nie ilość azbestu i nie
+          poziom ryzyka.
+        </p>
+      </div>
+
       <p className="mt-4 border-t border-hairline pt-4 text-xs text-ink-faint">
-        Rejestr jest niekompletny: brak budynku w rejestrze nie jest dowodem, że dach jest czysty — znaczy tylko, że
-        nikt go nie zgłosił.
+        Po oddaleniu mapa pokazuje wyłącznie zgłoszone budynki. Obszar bez koloru znaczy „nikt nic tu nie zgłosił", a
+        nie „nic tam nie ma": gmina, która nie prowadzi inwentaryzacji, zostaje na tej mapie pusta.
       </p>
       <p className="mt-2 text-xs text-ink-faint">
-        Po oddaleniu mapy widoczne są tylko zgłoszone budynki, i to jako punkty. Obrysy pojawiają się od zoomu 14,
-        punkty od zoomu 8, a niżej mapa nie pokazuje budynków wcale.
+        Obrysy budynków pojawiają się od zoomu {POLYGON_MIN_ZOOM} i dopiero wtedy można kliknąć pojedynczy dach.
+        W samo ciepło kliknąć się nie da — komórka siatki nie jest budynkiem.
+      </p>
+      <p className="mt-2 text-xs text-ink-faint">
+        Rejestr jest niekompletny: brak budynku w rejestrze nie jest dowodem, że dach jest czysty — znaczy tylko, że
+        nikt go nie zgłosił.
       </p>
     </section>
   )

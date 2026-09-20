@@ -124,7 +124,8 @@ export const basemapStyle: StyleSpecification = standardStyle
 /**
  * Okolice Zwolenia, nie Warszawa. W stolicy zgloszonych jest 0,1% budynkow, wiec mapa na starcie
  * wygladalaby na pusta; tutaj rejestr obejmuje ponad polowe zabudowy i od razu widac oba statusy.
- * Zoom musi byc >= POLYGON_MIN_ZOOM z layers.ts, inaczej backend wysyla same punkty.
+ * Zoom musi byc >= POLYGON_MIN_ZOOM z layers.ts, inaczej backend wysyla siatke zageszczenia
+ * zgloszen zamiast obrysow i nie ma w co kliknac.
  */
 export const INITIAL_CENTER: [number, number] = [21.08, 51.25]
 export const INITIAL_ZOOM = 15
