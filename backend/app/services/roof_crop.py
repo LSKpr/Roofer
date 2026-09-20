@@ -21,7 +21,7 @@ from rasterio.warp import reproject, transform_bounds
 from rasterio.windows import Window, from_bounds
 from shapely.geometry import Polygon, box
 
-from app.providers.roof_imagery import INDEX_URL, CropError, OrthoSource, discover_sources, download_source
+from app.providers.roof_imagery import INDEX_URL, CachedRaster, CropError, OrthoSource, discover_sources, download_source
 from app.services.geo import to_2180, to_4326, validate_polygon
 
 SIZE_PX = 47
@@ -29,6 +29,7 @@ RESOLUTION_M = 0.25
 SIDE_M = SIZE_PX * RESOLUTION_M
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 DEFAULT_DOWNLOAD_BYTES = 1536 * 1024 * 1024
+DEFAULT_SELECTION = "smallest RGB pixel, then newest acquisition date; optional year filter"
 
 
 @dataclass(frozen=True)
@@ -120,21 +121,14 @@ def crop_raster(path: Path, window: RoofWindow, source: OrthoSource) -> tuple[by
     return png, metadata
 
 
-def run_crop(payload: dict[str, Any], client: httpx.Client, cache_dir: Path, year: int | None = None, max_download_bytes: int = DEFAULT_DOWNLOAD_BYTES) -> tuple[bytes, dict[str, Any]]:
-    window = build_window(payload)
-    source = discover_sources(client, *window.center_4326, year=year)[0]
-    logger = logging.getLogger("roofer.crop")
-    logger.info("Selected RGB sheet %s, acquired %s, native pixel %.3f m. Checking cache or downloading the original (limit %.0f MiB).", source.sheet, source.acquisition_date, source.resolution_m, max_download_bytes / 1024**2)
-    cached = download_source(client, source, cache_dir, max_download_bytes)
-    logger.info("Original verified (%.1f MiB). Generating the 47x47 crop.", cached.size_bytes / 1024**2)
-    png, raster_metadata = crop_raster(cached.path, window, source)
-    metadata = {
+def crop_metadata(window: RoofWindow, source: OrthoSource, cached: CachedRaster, raster_metadata: dict[str, Any], year: int | None, selection: str = DEFAULT_SELECTION) -> dict[str, Any]:
+    return {
         "status": "ok",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "paper_doi": "10.1016/j.buildenv.2022.109092",
         "center": {"method": "projected_surface_centroid", "epsg2180_xy": list(window.center_2180), "wgs84_lon_lat": list(window.center_4326)},
         "output": {"format": "PNG", "channels": "RGB", "size_px": [SIZE_PX, SIZE_PX], "resolution_m": RESOLUTION_M, "extent_m": [SIDE_M, SIDE_M], "crs": "EPSG:2180", "bbox_xy": list(window.bounds), "affine": list(window.transform)[:6], "roof_overlap_fraction": window.roof.intersection(box(*window.bounds)).area / SIDE_M**2, "standardization": None},
-        "source": {"provider": "GUGiK", "index_url": INDEX_URL, "url": source.url, "sheet": source.sheet, "acquisition_date": source.acquisition_date.isoformat(), "index_resolution_m": source.resolution_m, "sha256": cached.sha256, "size_bytes": cached.size_bytes, "cache_path": str(cached.path.resolve()), "selection": "smallest RGB pixel, then newest acquisition date; optional year filter", "requested_year": year},
+        "source": {"provider": "GUGiK", "index_url": INDEX_URL, "url": source.url, "sheet": source.sheet, "acquisition_date": source.acquisition_date.isoformat(), "index_resolution_m": source.resolution_m, "sha256": cached.sha256, "size_bytes": cached.size_bytes, "cache_path": str(cached.path.resolve()), "selection": selection, "requested_year": year},
         "raster": raster_metadata,
         "attribution": "Orthophotomap: GUGiK / Geoportal.gov.pl",
         "warnings": [
@@ -143,7 +137,17 @@ def run_crop(payload: dict[str, Any], client: httpx.Client, cache_dir: Path, yea
             "The fixed square retains surroundings. Spatial dimensions match the paper; resampling and source imagery are not an exact reproduction of its training data.",
         ],
     }
-    return png, metadata
+
+
+def run_crop(payload: dict[str, Any], client: httpx.Client, cache_dir: Path, year: int | None = None, max_download_bytes: int = DEFAULT_DOWNLOAD_BYTES) -> tuple[bytes, dict[str, Any]]:
+    window = build_window(payload)
+    source = discover_sources(client, *window.center_4326, year=year)[0]
+    logger = logging.getLogger("roofer.crop")
+    logger.info("Selected RGB sheet %s, acquired %s, native pixel %.3f m. Checking cache or downloading the original (limit %.0f MiB).", source.sheet, source.acquisition_date, source.resolution_m, max_download_bytes / 1024**2)
+    cached = download_source(client, source, cache_dir, max_download_bytes)
+    logger.info("Original verified (%.1f MiB). Generating the 47x47 crop.", cached.size_bytes / 1024**2)
+    png, raster_metadata = crop_raster(cached.path, window, source)
+    return png, crop_metadata(window, source, cached, raster_metadata, year)
 
 
 def output_paths(prefix: Path) -> tuple[Path, Path]:

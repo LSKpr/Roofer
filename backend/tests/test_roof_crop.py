@@ -119,15 +119,20 @@ def test_declared_non_wgs84_crs_is_rejected():
 
 
 def test_sources_sorted_by_native_resolution_then_date_and_rgb_only():
+    best_url = SOURCE_URL.replace("83235/", "3/")
     records = [
         (SOURCE_URL.replace("83235/", "1/"), "2026-01-01", "0.25", "RGB"),
         (SOURCE_URL.replace("83235/", "2/"), "2024-04-01", "0.05", "RGB"),
         (SOURCE_URL, "2025-04-27", "0.05", "RGB"),
-        (SOURCE_URL.replace("83235/", "4/"), "2026-01-01", "0.03", "CIR"),
+        (SOURCE_URL.replace("83235/", "4/"), "2026-01-01", "0.01", "CIR"),
+        (SOURCE_URL.replace("83235/", "5/"), "2026-01-01", "0.1", "RGB"),
+        (best_url, "2023-04-01", "0.03", "RGB"),
     ]
     sources = parse_sources(index_html(records))
-    assert [source.resolution_m for source in sources] == [0.05, 0.05, 0.25]
-    assert sources[0] == SOURCE
+    assert [source.resolution_m for source in sources] == [0.03, 0.05, 0.05, 0.1, 0.25]
+    assert sources[0].url == best_url
+    assert sources[0].acquisition_date == date(2023, 4, 1)
+    assert sources[1] == SOURCE
     assert parse_sources(index_html(records), year=2024)[0].acquisition_date.year == 2024
 
 
@@ -143,6 +148,35 @@ def test_metadata_failures_are_explicit(html, status):
     with pytest.raises(CropError) as error:
         parse_sources(html)
     assert error.value.status == status
+
+
+def test_uppercase_tif_extension_is_accepted_without_discarding_the_location():
+    uppercase = SOURCE_URL.replace("83235/", "64887/").replace(".tif", ".TIF")
+    records = [(uppercase, "2016-04-03", "0.25", "RGB"), (SOURCE_URL, "2025-04-27", "0.05", "RGB")]
+    assert [source.url for source in parse_sources(index_html(records))] == [SOURCE_URL, uppercase]
+
+
+@pytest.mark.parametrize("group,resolution", [("skorDo5cm", "0.05"), ("skor510cm", "0.1"), ("skorOd10cm", "0.25")])
+def test_index_may_omit_resolution_groups_without_coverage(group, resolution):
+    document = index_html([(SOURCE_URL, "2025-04-27", resolution, "RGB")])
+    for name in ("skorDo5cm", "skor510cm", "skorOd10cm"):
+        if name != group:
+            document = document.replace(f"var {name} = [];", "")
+    document = document.replace("skorDo5cm.push", f"{group}.push")
+    assert parse_sources(document) == [replace(SOURCE, resolution_m=float(resolution))]
+
+
+def test_empty_present_resolution_group_is_no_coverage():
+    with pytest.raises(CropError) as error:
+        parse_sources("<script>var skorOd10cm = [];</script>")
+    assert error.value.status == "no_coverage"
+
+
+def test_records_in_undeclared_resolution_group_are_rejected():
+    document = index_html().replace("var skorDo5cm = [];", "")
+    with pytest.raises(CropError) as error:
+        parse_sources(document)
+    assert error.value.status == "invalid_metadata"
 
 
 def test_metadata_does_not_execute_javascript():

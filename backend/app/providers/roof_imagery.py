@@ -12,7 +12,7 @@ import httpx
 
 INDEX_URL = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/SkorowidzeWgRozdzielczosci"
 INDEX_LAYERS = "SkorowidzeOrtofotomapyDo5cm,SkorowidzeOrtofotomapyPowyzej5Do10cm,SkorowidzeOrtofotomapyPowyzej10cm"
-SOURCE_URL_PATTERN = re.compile(r"https://opendata\.geoportal\.gov\.pl/ortofotomapa/\d+/[A-Za-z0-9_.-]+\.tif")
+SOURCE_URL_PATTERN = re.compile(r"https://opendata\.geoportal\.gov\.pl/ortofotomapa/\d+/[A-Za-z0-9_.-]+\.(?:tif|TIF)")
 INDEX_ARRAYS = ("skorDo5cm", "skor510cm", "skorOd10cm")
 ROW_PATTERN = re.compile(r"\b(skorDo5cm|skor510cm|skorOd10cm)\.push\(\{(.*?)\}\);", re.DOTALL)
 
@@ -60,10 +60,11 @@ def parse_record(body: str) -> dict[str, str]:
 def parse_sources(document: str, year: int | None = None) -> list[OrthoSource]:
     if "ServiceException" in document or "ExceptionReport" in document:
         raise CropError("source_unavailable", "GUGiK returned an OGC exception instead of the imagery index.")
-    if not all(re.search(rf"\bvar\s+{name}\s*=\s*\[\s*\]", document) for name in INDEX_ARRAYS):
+    present_groups = {name for name in INDEX_ARRAYS if re.search(rf"\bvar\s+{name}\s*=\s*\[\s*\]", document)}
+    if not present_groups:
         raise CropError("invalid_metadata", "Unrecognized GUGiK index format; refusing to guess image metadata.")
     rows = ROW_PATTERN.findall(document)
-    if len(rows) != len(re.findall(r"\b(?:skorDo5cm|skor510cm|skorOd10cm)\.push\(", document)) or len(rows) >= 100:
+    if any(name not in present_groups for name, _ in rows) or len(rows) != len(re.findall(r"\b(?:skorDo5cm|skor510cm|skorOd10cm)\.push\(", document)) or len(rows) >= 100:
         raise CropError("invalid_metadata", "Malformed or potentially truncated GUGiK index response.")
     sources = {}
     try:
