@@ -44,6 +44,62 @@ export function roofImageUrl(id: number, size = 384, baseUrl: string = API_BASE_
   return `${baseUrl}/api/buildings/${id}/roof.png?size=${size}`
 }
 
+export type Coordinates = { lng: number; lat: number }
+
+/** Prostokat zaznaczony na mapie. Backend odrzuca zaznaczenia wieksze niz limit z /api/area/limits. */
+export type Bounds = { ne: Coordinates; sw: Coordinates }
+
+export type AreaStats = {
+  total: number
+  listed: number
+  notListed: number
+  /** Udzial zgloszonych: 0–1. */
+  listedShare: number
+  roofAreaM2: number
+  listedRoofAreaM2: number
+  registryRecords: number
+}
+
+export type ListedBuilding = {
+  id: number
+  areaM2: number
+  centroid: Coordinates
+  nrDzialki: string | null
+}
+
+export type AreaScan = {
+  stats: AreaStats
+  listedBuildings: ListedBuilding[]
+  /** true, gdy zgloszonych bylo wiecej, niz backend oddaje w liscie. */
+  truncated: boolean
+  areaKm2: number
+}
+
+/** Limit powierzchni zaznaczenia. Front pyta backend, zamiast trzymac wlasna kopie tej liczby. */
+export async function fetchAreaLimits(baseUrl: string = API_BASE_URL): Promise<{ maxAreaKm2: number }> {
+  const response = await fetch(`${baseUrl}/api/area/limits`)
+  if (response.status !== 200) throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+  return (await response.json()) as { maxAreaKm2: number }
+}
+
+/**
+ * Statystyki zaznaczonego obszaru. Przy 400 backend tlumaczy w `detail`, co jest nie tak
+ * (np. ile km2 zaznaczono wobec limitu) — ten tekst jest gotowy do pokazania uzytkownikowi.
+ */
+export async function fetchAreaScan(bounds: Bounds, baseUrl: string = API_BASE_URL): Promise<AreaScan> {
+  const response = await fetch(`${baseUrl}/api/area/scan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bounds),
+  })
+  if (response.status === 400 || response.status === 503) {
+    const body = (await response.json()) as { detail?: string }
+    throw new Error(body.detail ?? 'Nie udało się przeskanować obszaru.')
+  }
+  if (response.status !== 200) throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+  return (await response.json()) as AreaScan
+}
+
 /** Miejsce z wyszukiwarki. `bbox` jest w kolejnosci [south, west, north, east]. */
 export type Place = {
   label: string

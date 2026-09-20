@@ -13,7 +13,7 @@ export function ZoomHint({ zoom }: { zoom: number }) {
       : 'Widzisz punkty budynków zgłoszonych w rejestrze. Przybliż, aby zobaczyć obrysy dachów.'
 
   return (
-    <p className="rounded-full border border-slate-700 bg-slate-900/85 px-3 py-1 text-xs text-slate-300 shadow backdrop-blur">
+    <p className="rounded-card border border-hairline bg-surface px-3 py-1.5 text-xs text-ink-muted shadow-[0_1px_3px_rgba(5,28,44,0.08)]">
       {text}
     </p>
   )

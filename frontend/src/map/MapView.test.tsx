@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { TILES_URL } from '../api/client'
-import { INITIAL_CENTER, INITIAL_ZOOM, basemapStyle } from './basemap'
+import { BASEMAPS, DEFAULT_BASEMAP, INITIAL_CENTER, INITIAL_ZOOM, basemapStyle } from './basemap'
 import { CLICKABLE_LAYER_IDS, HIGHLIGHT_LAYER_IDS, LAYER_IDS, SOURCE_ID, SOURCE_MAX_ZOOM } from './layers'
 import { MapView } from './MapView'
 
@@ -13,8 +13,10 @@ type AddedLayer = { id: string; type: string }
 const constructed: unknown[] = []
 const added: unknown[] = []
 const removed = vi.fn()
+/** `sources` i `addedLayers` to stan mapy, nie dziennik: `setStyle` czysci je, tak jak MapLibre. */
 const sources: Array<[string, unknown]> = []
 const addedLayers: AddedLayer[] = []
+const styleSwaps: Array<[unknown, unknown]> = []
 const setFilters: Array<[string, unknown]> = []
 const handlers: Array<{ type: string; layer?: string; handler: Handler }> = []
 const queries: Array<[unknown, unknown]> = []
@@ -39,14 +41,40 @@ vi.mock('maplibre-gl', () => ({
         handlers.push({ type, handler: layerOrHandler })
       }
     }
+    // Rysowanie prostokata (rectangleDraw) odczepia sie po zakonczeniu i przy odmontowaniu,
+    // wiec mock musi naprawde usuwac nasluchy — inaczej testy liczace handlery klamalyby.
+    off(type: string, layerOrHandler: string | Handler, maybeHandler?: Handler) {
+      const handler = typeof layerOrHandler === 'string' ? maybeHandler : layerOrHandler
+      const index = handlers.findIndex((entry) => entry.type === type && entry.handler === handler)
+      if (index >= 0) handlers.splice(index, 1)
+    }
     addSource(id: string, spec: unknown) {
       sources.push([id, spec])
+    }
+    removeSource(id: string) {
+      const index = sources.findIndex(([sourceId]) => sourceId === id)
+      if (index >= 0) sources.splice(index, 1)
+    }
+    removeLayer(id: string) {
+      const index = addedLayers.findIndex((layer) => layer.id === id)
+      if (index >= 0) addedLayers.splice(index, 1)
+    }
+    getSource(id: string) {
+      return sources.find(([sourceId]) => sourceId === id)?.[1]
     }
     addLayer(layer: AddedLayer) {
       addedLayers.push(layer)
     }
     getLayer(id: string) {
       return addedLayers.find((layer) => layer.id === id)
+    }
+    // Prawdziwa MapLibre razem ze starym stylem usuwa zrodla i warstwy dodane recznie,
+    // a potem wysyla `style.load`. Mock musi robic to samo, inaczej test nie zauwazylby,
+    // ze komponent ich nie odtwarza.
+    setStyle(style: unknown, options: unknown) {
+      styleSwaps.push([style, options])
+      sources.length = 0
+      addedLayers.length = 0
     }
     setFilter(id: string, filter: unknown) {
       setFilters.push([id, filter])
@@ -78,6 +106,7 @@ beforeEach(() => {
   added.length = 0
   sources.length = 0
   addedLayers.length = 0
+  styleSwaps.length = 0
   setFilters.length = 0
   handlers.length = 0
   queries.length = 0
@@ -178,4 +207,80 @@ it('removes the map when the component unmounts', () => {
   view.unmount()
 
   expect(removed).toHaveBeenCalled()
+})
+
+// Mapa dostaje pierwszy styl w konstruktorze, wiec `setStyle` na starcie byloby drugim
+// zaladowaniem tych samych kafli.
+it('does not swap the style on the first render', () => {
+  render(<MapView />)
+  fire('style.load')
+
+  expect(styleSwaps).toHaveLength(0)
+  expect(constructed).toHaveLength(1)
+  expect(constructed[0]).toMatchObject({ style: BASEMAPS[DEFAULT_BASEMAP].style })
+})
+
+it('swaps only the style when the basemap prop changes', () => {
+  const view = render(<MapView basemap="standard" />)
+  fire('style.load')
+
+  view.rerender(<MapView basemap="orthophoto" />)
+
+  expect(styleSwaps).toEqual([[BASEMAPS.orthophoto.style, { diff: false }]])
+  // Zmiana podkladu nie moze przebudowac mapy: kamera i nasluchy musza zostac.
+  expect(constructed).toHaveLength(1)
+})
+
+// MapLibre razem ze starym stylem usuwa zrodla i warstwy dodane recznie — mock robi to samo,
+// wiec ten test wykrylby brak odtworzenia warstw budynkow po podmianie podkladu.
+it('re-adds the building source and layers after a style swap', () => {
+  const view = render(<MapView basemap="standard" />)
+  fire('style.load')
+
+  view.rerender(<MapView basemap="minimal" />)
+  expect(sources).toHaveLength(0)
+  expect(addedLayers).toHaveLength(0)
+
+  fire('style.load')
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+  expect(addedLayers.map((layer) => layer.id)).toEqual(Object.values(LAYER_IDS))
+})
+
+it('restores the highlight of the selected building after a style swap', () => {
+  const view = render(<MapView selectedId={7} basemap="standard" />)
+  fire('style.load')
+  view.rerender(<MapView selectedId={7} basemap="orthophoto" />)
+  setFilters.length = 0
+
+  fire('style.load')
+
+  expect(setFilters).toEqual(HIGHLIGHT_LAYER_IDS.map((id) => [id, ['==', ['id'], 7]]))
+})
+
+// Nasluchy kursora siedza na mapie, nie na stylu, wiec drugi `style.load` nie moze ich dolozyc:
+// dwa zestawy tych samych handlerow to dwa wywolania na kazde przejscie myszka.
+it('binds the cursor handlers once, not on every style load', () => {
+  const view = render(<MapView basemap="standard" />)
+  fire('style.load')
+
+  view.rerender(<MapView basemap="minimal" />)
+  fire('style.load')
+
+  const enters = handlers.filter((entry) => entry.type === 'mouseenter' && entry.layer === LAYER_IDS.fill)
+  expect(enters).toHaveLength(1)
+})
+
+it('ignores a basemap prop that is already applied', () => {
+  const view = render(<MapView basemap="orthophoto" />)
+  fire('style.load')
+
+  view.rerender(<MapView basemap="orthophoto" />)
+  expect(styleSwaps).toHaveLength(0)
+
+  view.rerender(<MapView basemap="minimal" />)
+  fire('style.load')
+  view.rerender(<MapView basemap="minimal" />)
+
+  expect(styleSwaps).toEqual([[BASEMAPS.minimal.style, { diff: false }]])
 })

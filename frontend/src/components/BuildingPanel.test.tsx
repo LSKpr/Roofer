@@ -126,3 +126,34 @@ it('nie uzywa slownictwa sugerujacego pomiar azbestu', () => {
   const text = view.container.textContent ?? ''
   expect(text).not.toMatch(/wykryto|brak azbestu|bezpieczny/i)
 })
+
+it('pokazuje zdjecie dachu zgloszonego budynku razem z atrybucja GUGiK', () => {
+  renderPanel(aBuilding({ id: 12, status: 'listed', registryMatches: [aMatch()] }))
+
+  expect(screen.getByAltText(/dachu budynku/i).getAttribute('src')).toContain('/api/buildings/12/roof.png')
+  expect(screen.getByText('Ortofotomapa: GUGiK / Geoportal.gov.pl')).toBeDefined()
+})
+
+it('pokazuje zdjecie dachu takze dla budynku niezgloszonego', () => {
+  renderPanel(aBuilding({ id: 34, status: 'not_listed' }))
+
+  expect(screen.getByAltText(/dachu budynku/i).getAttribute('src')).toContain('/api/buildings/34/roof.png')
+})
+
+it('zamienia niedostepne ortofoto na komunikat, nie na pusta ramke', () => {
+  renderPanel(aBuilding())
+
+  fireEvent.error(screen.getByAltText(/dachu budynku/i))
+
+  expect(screen.getByText('Ortofotomapa niedostępna')).toBeDefined()
+})
+
+it('oznacza status kwadratowa kropka w kolorze rejestru, a nie kolorowa plakietka', () => {
+  renderPanel(aBuilding({ status: 'listed', registryMatches: [aMatch()] }))
+  expect(screen.getByTestId('status-dot').className).toContain('bg-listed')
+
+  renderPanel(aBuilding({ status: 'not_listed' }))
+  const dots = screen.getAllByTestId('status-dot')
+  expect(dots[1].className).toContain('bg-not-listed')
+  expect(dots[1].className).not.toContain('rounded')
+})

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { Building, RegistryMatch } from '../api/client'
+import { RoofPhoto } from './RoofPhoto'
 
 type BuildingPanelProps = {
   building: Building | null
@@ -41,12 +42,23 @@ function recordsNoun(count: number): string {
   return 'rekordów'
 }
 
+/** Para etykieta/wartosc: mikropodpis po lewej, wartosc po prawej, wiersze rozdziela wlosowa linia. */
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between gap-2">
-      <dt className="text-slate-400">{label}</dt>
-      <dd className="text-right text-slate-100">{value}</dd>
+    <div className="flex items-baseline justify-between gap-4 border-t border-hairline py-1.5 first:border-t-0 first:pt-0">
+      <dt className="label-micro">{label}</dt>
+      <dd className="text-right text-ink">{value}</dd>
     </div>
+  )
+}
+
+/** Sekcje rozdziela wlosowa linia i swiatlo, nigdy kolorowy blok. */
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mt-4 border-t border-hairline pt-4">
+      <h3 className="label-micro">{title}</h3>
+      <div className="mt-2">{children}</div>
+    </section>
   )
 }
 
@@ -54,20 +66,23 @@ function Shell({ title, onClose, children }: { title: string; onClose: () => voi
   return (
     <section
       aria-label="Szczegóły budynku"
-      className="flex max-h-[70vh] w-80 flex-col rounded-lg border border-slate-700 bg-slate-900/85 text-slate-100 shadow-lg backdrop-blur"
+      className="flex max-h-[80vh] w-88 flex-col rounded-card border border-hairline bg-surface text-ink shadow-[0_1px_3px_rgba(5,28,44,0.08)]"
     >
-      <header className="flex items-start justify-between gap-2 border-b border-slate-700 px-3 py-2">
-        <h2 className="text-sm leading-snug font-semibold">{title}</h2>
+      <header className="flex items-start justify-between gap-3 border-b border-hairline px-5 pt-3 pb-3">
+        <div>
+          <p className="label-micro">Karta budynku</p>
+          <h2 className="font-display text-base leading-snug text-ink">{title}</h2>
+        </div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Zamknij"
-          className="-mt-1 rounded px-1.5 text-lg leading-none text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+          className="-mt-1 -mr-2 rounded-card px-2 py-1 text-base leading-none text-ink-faint hover:bg-surface-muted hover:text-ink"
         >
           ×
         </button>
       </header>
-      <div className="min-h-0 overflow-y-auto px-3 py-2 text-xs text-slate-300">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm text-ink-muted">{children}</div>
     </section>
   )
 }
@@ -76,7 +91,7 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
   if (loading) {
     return (
       <Shell title="Szczegóły budynku" onClose={onClose}>
-        <p className="text-slate-300">Wczytuję szczegóły…</p>
+        <p className="text-ink-muted">Wczytuję szczegóły…</p>
       </Shell>
     )
   }
@@ -84,7 +99,7 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
   if (error) {
     return (
       <Shell title="Nie udało się wczytać budynku" onClose={onClose}>
-        <p className="text-red-300">{error}</p>
+        <p className="text-listed">{error}</p>
       </Shell>
     )
   }
@@ -92,41 +107,52 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
   if (!building) return null
 
   const listed = building.status === 'listed'
-  const badge = listed
-    ? { text: 'Zgłoszony w rejestrze', className: 'border-red-500/60 bg-red-500/20 text-red-200' }
-    : { text: 'Niezgłoszony', className: 'border-slate-500/60 bg-slate-600/40 text-slate-200' }
 
   return (
     <Shell title={headerTitle(building)} onClose={onClose}>
-      <p>
-        <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${badge.className}`}>
-          {badge.text}
-        </span>
-      </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="label-micro">Powierzchnia dachu</p>
+          <p className="font-display mt-0.5 text-2xl leading-none text-ink">{areaLabel(building.areaM2)}</p>
+        </div>
+        <div className="text-right">
+          <p className="label-micro">Status w rejestrze</p>
+          {/* Status to kwadratowa kropka i tekst, nie kolorowa pigulka: rejestr nie jest ostrzezeniem. */}
+          <p className="mt-1.5 flex items-center justify-end gap-2 text-ink">
+            <span
+              data-testid="status-dot"
+              className={`inline-block h-2 w-2 shrink-0 ${listed ? 'bg-listed' : 'bg-not-listed'}`}
+            />
+            {listed ? 'Zgłoszony w rejestrze' : 'Niezgłoszony'}
+          </p>
+        </div>
+      </div>
 
-      <dl className="mt-3 space-y-1">
-        <Row label="Powierzchnia" value={areaLabel(building.areaM2)} />
-        <Row
-          label="Centroid (lng, lat)"
-          value={`${building.centroid.lng.toFixed(5)}, ${building.centroid.lat.toFixed(5)}`}
-        />
-        {building.osmId ? <Row label="OpenStreetMap" value={building.osmId} /> : null}
-      </dl>
+      <Section title="Zdjęcie dachu">
+        {/* `key` zeruje stan wczytywania przy przejsciu na inny budynek — karta sie nie przemontowuje. */}
+        <RoofPhoto key={building.id} buildingId={building.id} />
+      </Section>
+
+      <Section title="Dane budynku">
+        <dl>
+          <Row
+            label="Centroid (lng, lat)"
+            value={`${building.centroid.lng.toFixed(5)}, ${building.centroid.lat.toFixed(5)}`}
+          />
+          {building.osmId ? <Row label="OpenStreetMap" value={building.osmId} /> : null}
+        </dl>
+      </Section>
 
       {listed ? (
-        <div className="mt-3">
-          <h3 className="text-xs font-semibold text-slate-200">Rekordy rejestru ({building.registryMatches.length})</h3>
+        <Section title={`Rekordy rejestru (${building.registryMatches.length})`}>
           {building.registryMatches.length === 0 ? (
-            <p className="mt-1 text-slate-400">Backend nie podał szczegółów rekordów.</p>
+            <p className="text-ink-muted">Backend nie podał szczegółów rekordów.</p>
           ) : (
-            <ul className="mt-1 space-y-2">
+            <ul>
               {building.registryMatches.map((match, index) => (
-                <li
-                  key={match.sourceId ?? `${match.nrDzialki ?? 'rekord'}-${index}`}
-                  className="rounded border border-slate-700 bg-slate-800/60 p-2"
-                >
-                  <p className="font-medium text-slate-100">{matchTitle(match)}</p>
-                  <dl className="mt-1 space-y-0.5">
+                <li key={match.sourceId ?? `${match.nrDzialki ?? 'rekord'}-${index}`} className="pt-3 first:pt-0">
+                  <p className="text-ink">{matchTitle(match)}</p>
+                  <dl className="mt-1.5">
                     <Row label="Powierzchnia rekordu" value={areaLabel(match.recordAreaM2)} />
                     <Row label="Przekrycie" value={areaLabel(match.overlapM2)} />
                     <Row label="Udział w budynku" value={percentLabel(match.shareBuilding)} />
@@ -136,25 +162,26 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
               ))}
             </ul>
           )}
-        </div>
+        </Section>
       ) : (
-        <p className="mt-3 text-slate-400">
-          Tego budynku nie ma w rejestrze GeoAzbest, więc jest niezgłoszony. To nie jest dowód, że dach jest czysty —
-          znaczy tylko, że nikt go nie zgłosił.
-        </p>
+        <Section title="Rejestr GeoAzbest">
+          <p className="text-ink-muted">
+            Tego budynku nie ma w rejestrze, więc jest niezgłoszony. To nie jest dowód, że dach jest czysty — znaczy
+            tylko, że nikt go nie zgłosił.
+          </p>
+        </Section>
       )}
 
       {building.otherIntersecting > 0 ? (
-        <p className="mt-3 text-slate-400">
+        <p className="mt-4 text-xs text-ink-faint">
           Ten budynek przecina jeszcze {building.otherIntersecting} {recordsNoun(building.otherIntersecting)} rejestru,
-          które nie spełniły reguły dopasowania. Część geometrii w rejestrze to obrysy działek, nie dachów, i takie
-          przecięcia są odrzucane.
+          które nie spełniły reguły dopasowania — część geometrii w rejestrze to obrysy działek, nie dachów.
         </p>
       ) : null}
 
-      <p className="mt-3 border-t border-slate-700 pt-2 text-slate-500">
-        Rejestr GeoAzbest jest niekompletny i opisuje zgłoszone wyroby azbestowe w obiekcie, a nie potwierdzone
-        pokrycie dachu. Poza statusem zgłoszenia stan dachu pozostaje nieznany.
+      <p className="mt-4 border-t border-hairline pt-4 text-xs text-ink-faint">
+        Rejestr jest niekompletny i opisuje zgłoszone wyroby azbestowe w obiekcie, a nie potwierdzone pokrycie dachu.
+        Poza statusem zgłoszenia stan dachu pozostaje nieznany.
       </p>
     </Shell>
   )

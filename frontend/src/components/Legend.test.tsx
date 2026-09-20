@@ -30,7 +30,17 @@ it('nie uzywa slownictwa sugerujacego pomiar azbestu', () => {
   expect(text).not.toMatch(/wykryto|brak azbestu|bezpieczny/i)
 })
 
+/** Te same wartosci co tokeny --color-listed i --color-not-listed w index.css. */
 it('trzyma kolory probek w stalych, zeby zgadzaly sie z warstwami mapy', () => {
-  expect(LISTED_COLOR).toBe('#EF4444')
-  expect(NOT_LISTED_COLOR).toBe('#64748B')
+  expect(LISTED_COLOR).toBe('#c8102e')
+  expect(NOT_LISTED_COLOR).toBe('#9aa5ad')
+})
+
+it('rysuje probki jako kwadraty w kolorze statusu, bez kolorowych plakietek', () => {
+  render(<Legend />)
+
+  const [listed, notListed] = screen.getAllByTestId('legend-swatch')
+  expect(listed.getAttribute('style')).toContain('background-color')
+  expect(listed.className).not.toContain('rounded')
+  expect(notListed.className).not.toContain('rounded')
 })
