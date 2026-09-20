@@ -3,6 +3,10 @@ from functools import lru_cache
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Jedno zrodlo prawdy dla limitow uslugi modelu; `app.prediction` nie importuje konfiguracji,
+# wiec ten kierunek nie tworzy cyklu.
+from app.prediction import MODEL_MAX_AREA_KM2, MODEL_MAX_BUILDINGS
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore")
@@ -52,9 +56,14 @@ class Settings(BaseSettings):
     # odpowiedzi, a chroni przed limitem 10 zapytan na minute po stronie tamtej instancji.
     prediction_cache_ttl_s: float = 3600.0
     prediction_min_interval_s: float = 6.0
-    # Skan obszaru pyta o setke budynkow naraz, wiec ma wlasny, dluzszy limit czasu. Tamta
-    # instancja i tak przerywa zadanie po 180 s — czekanie dluzej niczego by nie doczekalo.
+    # Skan obszaru pyta o setki budynkow naraz, wiec ma wlasny, dluzszy limit czasu. Usluga modelu
+    # i tak przerywa zadanie po 180 s — czekanie dluzej niczego by nie doczekalo.
     prediction_area_timeout_s: float = 180.0
+    # Limity USLUGI modelu, ktore odwzorowuje nasza bramka (patrz MODEL_MAX_* w app/prediction.py).
+    # Trzymamy je w konfiguracji, bo naleza do uruchomionej instancji: lokalna kopia przyjmuje
+    # tyle, ile jej ustawimy przez ROOFER_MAX_BUILDINGS, a wspoldzielona instancja miala 100 i 4 km2.
+    prediction_model_max_buildings: int = MODEL_MAX_BUILDINGS
+    prediction_model_max_area_km2: float = MODEL_MAX_AREA_KM2
 
     @property
     def allowed_origins(self) -> list[str]:

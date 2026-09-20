@@ -348,9 +348,23 @@ def test_the_gate_names_both_reasons_when_both_are_exceeded() -> None:
 
 
 def test_the_gate_is_stricter_than_the_registry_scan() -> None:
-    """Skan rejestru przepuszcza 25 km2, model tylko 4 — front musi czytac obie liczby."""
+    """Skan rejestru przepuszcza 25 km2, model mniej — front musi czytac obie liczby."""
     assert MODEL_MAX_AREA_KM2 < MAX_AREA_KM2
-    assert model_limit_problem(10.0) is not None
+    assert model_limit_problem(MODEL_MAX_AREA_KM2 + 0.1) is not None
+    assert model_limit_problem(MODEL_MAX_AREA_KM2) is None
+
+
+def test_the_gate_uses_the_limits_it_is_given_not_the_defaults() -> None:
+    """Limity naleza do uruchomionej uslugi: lokalna kopia przyjmuje tyle, ile jej ustawimy,
+    a wspoldzielona instancja miala 100 budynkow i 4 km2. Bramka musi isc za konfiguracja,
+    inaczej blokuje zapytania, ktore by przeszly, albo wpuszcza te, ktore dostana cudze 413."""
+    strict = model_limit_problem(5.0, 120, max_buildings=100, max_area_km2=4.0)
+
+    assert strict is not None
+    assert "up to 100 buildings and 4 km²" in strict
+    assert "has 120 buildings" in strict
+    # Te same liczby przy wyzszych limitach nie sa juz problemem.
+    assert model_limit_problem(5.0, 120, max_buildings=500, max_area_km2=10.0) is None
 
 
 # --- zapytania do bazy -------------------------------------------------------------------------------

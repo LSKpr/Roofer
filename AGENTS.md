@@ -200,13 +200,34 @@ ROOFER_REQUESTS_PER_MINUTE=120 ./.venv/Scripts/python.exe -m uvicorn \
 Port 8020, bo 8001 zajmuje nasz backend, a 8010 był tunelem. Token trafia do naszego `.env`
 (`PREDICTION_API_TOKEN`), którego nie ma w repozytorium.
 
-**Co zyskaliśmy poza niezależnością.** Limity tamtej instancji były jej zmiennymi środowiskowymi, nie
-własnościami modelu: `ROOFER_REQUESTS_PER_MINUTE` podnieśliśmy z 10 na 120, więc odstęp między
-zapytaniami w naszym dostawcy (`PREDICTION_MIN_INTERVAL_S`) spadł z 6 s na 0,5 s — klikanie w kolejne
-budynki nie czeka już sekund na ogranicznik. Limity 100 budynków i 4 km² **zostały bez zmian**, bo
-nasza bramka (`MODEL_MAX_BUILDINGS`, `MODEL_MAX_AREA_KM2` w `app/prediction.py`) je odwzorowuje;
-podniesienie ich wymaga zmiany w obu miejscach naraz, inaczej bramka blokuje zapytania, które by
-przeszły.
+**Limity są nasze, nie modelu.** To były zmienne środowiskowe tamtej instancji, więc lokalnie
+ustawiamy je sami. Obecnie usługa startuje z `ROOFER_MAX_BUILDINGS=500`, `ROOFER_MAX_AREA_KM2=10`,
+`ROOFER_REQUESTS_PER_MINUTE=120`, `ROOFER_TILE_CACHE_BYTES=536870912`, `ROOFER_TILE_CONCURRENCY=16`.
+Podniesienie tempa pozwoliło zejść z `PREDICTION_MIN_INTERVAL_S` z 6 s na 0,5 s, więc klikanie
+w kolejne budynki nie czeka już na ogranicznik.
+
+**Te liczby muszą być takie same po obu stronach.** Nasza bramka (`MODEL_MAX_BUILDINGS`,
+`MODEL_MAX_AREA_KM2` w `app/prediction.py`, nadpisywalne przez `prediction_model_max_*`) istnieje po
+to, żeby za duży prostokąt dostał własne 400 z konkretną liczbą w kilkudziesięciu milisekundach,
+zamiast czekać kilkanaście sekund na `413` od usługi. Ustawiona niżej blokuje zapytania, które by
+przeszły; wyżej — traci cały sens.
+
+Skąd 500 i 10 km², a nie więcej. Pomiar na rozłącznych obszarach (kafle Google przez zwykłe łącze):
+
+| obszar | budynków | czas | na budynek |
+|---|---:|---:|---:|
+| Zwoleń-E | 251 | 44,6 s | 178 ms |
+| Radom-S | 580 | 75,7 s | 131 ms |
+| Grójec | 1138 | 116,5 s | 102 ms |
+
+Wąskim gardłem jest pobieranie kafli, nie model. Tysiąc budynków to dwie minuty patrzenia w napis,
+więc 500 (~75 s) jest granicą tego, co da się pokazać jako działający interfejs, i mieści się
+w 180-sekundowym limicie żądania. Panel podaje przy tym szacowany czas (`SECONDS_PER_ROOF = 0.18`
+w `ScanPanel.tsx`, z tych samych pomiarów) — bez tego wygląda na zawieszony i użytkownik przerywa.
+
+Sprawdzone na żywo przez nasz endpoint: 464 budynki w **64,8 s**, odpowiedź 129 KB, `truncated: false`
+(ważne, bo przycięta lista wyłącza suwak progu), 120 niezgłoszonych budynków z flagą. Prostokąt
+z 691 budynkami dostaje 400 w **30 ms**.
 
 Pomiary z tego samego prostokąta pod Zwoleniem (76 budynków):
 

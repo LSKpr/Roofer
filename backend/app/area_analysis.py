@@ -36,10 +36,12 @@ from app.prediction import (
     AreaModelResult,
 )
 
-# Gorna granica listy budynkow w odpowiedzi. Przy bramce 100 budynkow nie da sie jej dzisiaj
-# przekroczyc — jest po to, zeby podniesienie limitu po tamtej stronie nie zamienilo odpowiedzi
-# w megabajt geometrii po cichu. Nadwyzke zglasza pole `truncated`, tak samo jak w /area/scan.
-MAX_ANALYSED_BUILDINGS = 100
+# Gorna granica listy budynkow w odpowiedzi. Domyslnie rowna limitowi bramki, zeby przy normalnej
+# pracy nie dalo sie jej przekroczyc: `truncated` wylacza w panelu suwak progu (nie mamy wtedy
+# wszystkich ocen, wiec nie ma z czego przeliczac), a to byloby gorsze niz duza odpowiedz.
+# Zostaje jako zabezpieczenie: gdyby usluga oddala wiecej, niz wpuscila nasza bramka, nadwyzke
+# zglasza pole `truncated`, tak samo jak w /area/scan.
+MAX_ANALYSED_BUILDINGS = MODEL_MAX_BUILDINGS
 
 _ENVELOPE = "ST_MakeEnvelope(%(west)s, %(south)s, %(east)s, %(north)s, 4326)"
 
@@ -65,7 +67,7 @@ WHERE b.osm_id = ANY(%(ids)s)
 # Komunikat bramki. Podaje OBA limity i konkretna liczbe, ktora je przebila — „za duzy obszar"
 # bez liczb kaze uzytkownikowi zgadywac, o ile ma zmniejszyc prostokat.
 LIMIT_MESSAGE = (
-    "The model accepts up to {max_buildings} buildings and {max_area} km²; this area {actual} "
+    "The model accepts up to {max_buildings:,} buildings and {max_area} km²; this area {actual} "
     "— select a smaller rectangle."
 )
 
@@ -141,23 +143,31 @@ def bbox_parameters(bbox: BoundingBox) -> dict[str, float]:
     return {"south": bbox.south, "west": bbox.west, "north": bbox.north, "east": bbox.east}
 
 
-def model_limit_problem(area_km2: float, buildings: int | None = None) -> str | None:
+def model_limit_problem(
+    area_km2: float,
+    buildings: int | None = None,
+    max_buildings: int = MODEL_MAX_BUILDINGS,
+    max_area_km2: float = MODEL_MAX_AREA_KM2,
+) -> str | None:
     """Komunikat bramki albo None. `buildings=None` znaczy „jeszcze nie pytalismy bazy".
 
     Wolamy to dwa razy: raz przed zapytaniem do bazy (sama powierzchnia) i raz po policzeniu
     budynkow. Dzieki temu za duzy prostokat nie kosztuje ani jednego zapytania, a prostokat maly
     powierzchnia, lecz gesto zabudowany, i tak zostanie zatrzymany przed cudzym 413.
+
+    Limity sa argumentami, a nie odczytem stalych: nalezą do uruchomionej uslugi modelu, wiec trasa
+    podaje je z konfiguracji. Domyslne wartosci opisuja usluge, ktora stawiamy u siebie.
     """
     over: list[str] = []
-    if area_km2 > MODEL_MAX_AREA_KM2:
+    if area_km2 > max_area_km2:
         over.append(f"is {format_km2(area_km2)} km²")
-    if buildings is not None and buildings > MODEL_MAX_BUILDINGS:
+    if buildings is not None and buildings > max_buildings:
         over.append(f"has {buildings:,} buildings")
     if not over:
         return None
     return LIMIT_MESSAGE.format(
-        max_buildings=MODEL_MAX_BUILDINGS,
-        max_area=format_km2(MODEL_MAX_AREA_KM2),
+        max_buildings=max_buildings,
+        max_area=format_km2(max_area_km2),
         actual=" and ".join(over),
     )
 

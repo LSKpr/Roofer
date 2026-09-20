@@ -374,11 +374,22 @@ def analysis_from_properties(properties: dict[str, Any], model_id: str | None) -
     )
 
 
-# Limity tamtej instancji, podane przez jej `/health` i potwierdzone na zywo: wiekszy prostokat
-# dostaje `413 TOO_MANY_BUILDINGS`. Sa tutaj, a nie w app/area.py, bo to limity CUDZEGO serwisu —
-# nasza bramka (app/area_analysis.py) tylko je czyta i zglasza uzytkownikowi wlasnymi liczbami.
-MODEL_MAX_BUILDINGS = 100
-MODEL_MAX_AREA_KM2 = 4.0
+# Limity USLUGI modelu, nie nasze: to ona odrzuca wieksze zapytanie przez `413`. Sa tutaj, a nie
+# w app/area.py, bo opisuja cudzy serwis — nasza bramka (app/area_analysis.py) tylko je czyta
+# i zglasza uzytkownikowi wlasnymi liczbami, zeby nie czekac kilkudziesieciu sekund na odmowe.
+#
+# WAZNE: te liczby musza odpowiadac `ROOFER_MAX_BUILDINGS` i `ROOFER_MAX_AREA_KM2` uruchomionej
+# uslugi. Ustawione nizej blokuja zapytania, ktore by przeszly; wyzej — zamieniaja natychmiastowe
+# 400 z konkretna liczba na kilkanascie sekund czekania na cudze 413. Nadpisuje je konfiguracja
+# (`prediction_model_max_buildings`, `prediction_model_max_area_km2`), wiec zmiana limitu uslugi
+# nie wymaga ruszania kodu.
+#
+# Skad 500 i 10 km2, a nie wiecej: pomiar na lokalnej kopii (kafle Google przez lacze domowe)
+# dal 251 budynkow w 44,6 s, 580 w 75,7 s i 1138 w 116,5 s. Waskim gardlem jest pobieranie kafli,
+# nie model, a dwie minuty patrzenia w napis „Analysing…" to nie jest interfejs, ktory chcemy
+# pokazac. 500 budynkow to okolo 75 s i miesci sie w 180-sekundowym limicie zadania.
+MODEL_MAX_BUILDINGS = 500
+MODEL_MAX_AREA_KM2 = 10.0
 
 # Ile sekund czekamy na ocene calego prostokata. Tamta instancja przerywa zadanie po 180 s, wiec
 # czekanie dluzej nie ma sensu; 74 budynki policzyla w 2,7 s, czyli to jest zapas, nie norma.

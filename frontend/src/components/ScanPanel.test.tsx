@@ -645,3 +645,31 @@ it('przy przycietej liscie nie daje suwaka i mowi, dlaczego', () => {
   expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
   expect(screen.getByText('16 (25%)')).toBeDefined()
 })
+
+// Piecset dachow idzie ponad minute. Bez tej informacji panel wyglada na zawieszony, a uzytkownik
+// przerywa i probuje jeszcze raz — czyli placi za to samo dwa razy.
+it('szacuje czas oczekiwania z liczby dachow', () => {
+  renderPanel(aSmallScan(), { analysisLoading: true })
+  expect(screen.getByText('usually a few seconds')).toBeDefined()
+
+  const threeHundred = aSmallScan({ stats: someStats({ total: 300, listed: 10, notListed: 290, listedShare: 0.03 }) })
+  renderPanel(threeHundred, { analysisLoading: true })
+  expect(screen.getByText('usually about 50 seconds')).toBeDefined()
+})
+
+// Piecset dachow to gorna granica bramki, wiec to jest najdluzsze oczekiwanie, jakie panel obiecuje.
+it('przy limicie bramki obiecuje minuty, a nie sekundy', () => {
+  const atLimit = aSmallScan({ stats: someStats({ total: 500, listed: 10, notListed: 490, listedShare: 0.02 }) })
+
+  renderPanel(atLimit, { analysisLoading: true })
+
+  expect(screen.getByText('usually about 2 min')).toBeDefined()
+})
+
+it('przy duzym obszarze podaje szacunek w minutach, nie w setkach sekund', () => {
+  const thousand = aSmallScan({ stats: someStats({ total: 1000, listed: 20, notListed: 980, listedShare: 0.02 }) })
+
+  renderPanel(thousand, { analysisLoading: true })
+
+  expect(screen.getByText('usually about 3 min')).toBeDefined()
+})

@@ -203,11 +203,21 @@ def to_analysis_response(analysis: AreaAnalysis) -> AnalysisResponse:
     )
 
 
+def model_limits(settings: Any) -> tuple[int, float]:
+    """Limity uruchomionej uslugi modelu. Jedno miejsce, z ktorego czytaja je bramka i endpoint
+    limitow — inaczej front pokazywalby inna liczbe, niz blokuje backend."""
+    return (
+        int(getattr(settings, "prediction_model_max_buildings", MODEL_MAX_BUILDINGS)),
+        float(getattr(settings, "prediction_model_max_area_km2", MODEL_MAX_AREA_KM2)),
+    )
+
+
 @router.get("/area/limits", response_model=AreaLimits)
-async def limits() -> AreaLimits:
+async def limits(request: Request) -> AreaLimits:
+    max_buildings, max_area_km2 = model_limits(request.app.state.settings)
     return AreaLimits(
         max_area_km2=MAX_AREA_KM2,
-        model=ModelLimits(max_buildings=MODEL_MAX_BUILDINGS, max_area_km2=MODEL_MAX_AREA_KM2),
+        model=ModelLimits(max_buildings=max_buildings, max_area_km2=max_area_km2),
     )
 
 
@@ -245,8 +255,9 @@ async def analyze(body: ScanRequest, request: Request) -> AnalysisResponse:
     if problem is not None:
         raise HTTPException(status_code=400, detail=problem)
 
+    max_buildings, max_area_km2 = model_limits(request.app.state.settings)
     area_km2 = bbox_area_km2(bbox)
-    too_large = model_limit_problem(area_km2)
+    too_large = model_limit_problem(area_km2, None, max_buildings, max_area_km2)
     if too_large is not None:  # sama powierzchnia: nie kosztuje ani bazy, ani modelu
         raise HTTPException(status_code=400, detail=too_large)
 
@@ -263,7 +274,7 @@ async def analyze(body: ScanRequest, request: Request) -> AnalysisResponse:
     except Exception as error:
         raise HTTPException(status_code=503, detail=DATABASE_DOWN) from error
 
-    too_many = model_limit_problem(area_km2, buildings)
+    too_many = model_limit_problem(area_km2, buildings, max_buildings, max_area_km2)
     if too_many is not None:
         raise HTTPException(status_code=400, detail=too_many)
 
@@ -283,4 +294,6 @@ async def analyze(body: ScanRequest, request: Request) -> AnalysisResponse:
     except Exception as error:
         raise HTTPException(status_code=503, detail=DATABASE_DOWN) from error
 
-    return to_analysis_response(analysis_from_model(result, facts))
+    # Lista siega tyle, ile wpuscila bramka: `truncated` wylaczyloby w panelu suwak progu, bo bez
+    # wszystkich ocen nie ma z czego przeliczac licznikow.
+    return to_analysis_response(analysis_from_model(result, facts, max_buildings))

@@ -109,6 +109,28 @@ function roofsLabel(count: number): string {
 }
 
 /**
+ * Ile sekund zajmuje zwykle ocena jednego dachu. Zmierzone na lokalnej kopii uslugi, gdzie kafle
+ * Google ida przez zwykle lacze: 251 dachow w 44,6 s, 580 w 75,7 s, 1138 w 116,5 s — czyli
+ * 0,10-0,18 s na dach, bo waskim gardlem jest pobieranie kafli, nie model.
+ *
+ * Bierzemy gorny koniec przedzialu: obiecana minuta, ktora robi sie dwiema, jest gorsza niz
+ * ostrozny szacunek, ktory konczy sie wczesniej.
+ */
+const SECONDS_PER_ROOF = 0.18
+
+/**
+ * Szacowany czas oczekiwania. Przy pieciuset dachach zadanie idzie ponad minute i bez tej
+ * informacji panel wyglada na zawieszony — a uzytkownik, ktory nie wie, ile czekac, przerywa
+ * i probuje jeszcze raz.
+ */
+function waitLabel(roofs: number): string {
+  const seconds = Math.round(roofs * SECONDS_PER_ROOF)
+  if (seconds < 15) return 'usually a few seconds'
+  if (seconds < 90) return `usually about ${Math.max(10, Math.round(seconds / 10) * 10)} seconds`
+  return `usually about ${Math.round(seconds / 60)} min`
+}
+
+/**
  * Powod, dla ktorego model nie przyjmie tego obszaru — albo `null`, gdy przyjmie.
  *
  * Liczba budynkow jest znana z wyniku skanu, a powierzchnia z tego samego wyniku, wiec powod da
@@ -262,8 +284,11 @@ function ModelSection({
   return (
     <Section title="Model analysis">
       {loading ? (
-        // Zadanie trwa kilka sekund; bez tego zdania panel wyglada na zepsuty.
-        <p className="text-ink-muted">Analysing {roofsLabel(scan.stats.total)}…</p>
+        // Zadanie trwa od kilku sekund do ponad minuty; bez tego zdania panel wyglada na zepsuty.
+        <div>
+          <p className="text-ink-muted">Analysing {roofsLabel(scan.stats.total)}…</p>
+          <p className="label-micro mt-1">{waitLabel(scan.stats.total)}</p>
+        </div>
       ) : analysis ? (
         <ModelNumbers analysis={analysis} threshold={threshold} onThresholdChange={onThresholdChange} />
       ) : (
