@@ -35,8 +35,23 @@ export type Building = {
  */
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? ''
 
-/** Szablon dla MapLibre — nawiasy klamrowe podstawia sama biblioteka. */
+/** Szablony dla MapLibre — nawiasy klamrowe podstawia sama biblioteka. */
 export const TILES_URL = `${API_BASE_URL}/api/tiles/buildings/{z}/{x}/{y}.mvt`
+export const ORTHOPHOTO_TILES_URL = `${API_BASE_URL}/api/imagery/orthophoto/{z}/{x}/{y}.png`
+
+/** Wycinek ortofoto wycentrowany na dachu; backend wymusza kwadrat i margines. */
+export function roofImageUrl(id: number, size = 384, baseUrl: string = API_BASE_URL): string {
+  return `${baseUrl}/api/buildings/${id}/roof.png?size=${size}`
+}
+
+/** Miejsce z wyszukiwarki. `bbox` jest w kolejnosci [south, west, north, east]. */
+export type Place = {
+  label: string
+  lat: number
+  lng: number
+  bbox: [number, number, number, number] | null
+  kind: string | null
+}
 
 /**
  * 503 to prawidlowa odpowiedz sondy zdrowia (backend zyje, baza nie) i wraca jako dane,
@@ -48,6 +63,26 @@ export async function fetchHealth(baseUrl: string = API_BASE_URL): Promise<Healt
     throw new Error(`Backend odpowiedzial kodem ${response.status}`)
   }
   return (await response.json()) as Health
+}
+
+/**
+ * Wyszukiwanie miejsc. Backend jest tu proxy do Nominatima, ktory dopuszcza jedno zapytanie
+ * na sekunde — przy 429 komunikat mowi, zeby sprobowac za chwile, a nie udaje braku wynikow.
+ */
+export async function fetchPlaces(query: string, limit = 5, baseUrl: string = API_BASE_URL): Promise<Place[]> {
+  const search = new URLSearchParams({ q: query, limit: String(limit) })
+  const response = await fetch(`${baseUrl}/api/geocode?${search}`)
+  if (response.status === 429) {
+    throw new Error('Za dużo zapytań do wyszukiwarki. Spróbuj ponownie za chwilę.')
+  }
+  if (response.status === 503) {
+    throw new Error('Wyszukiwarka miejsc nie odpowiada.')
+  }
+  if (response.status !== 200) {
+    throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+  }
+  const body = (await response.json()) as { results: Place[] }
+  return body.results
 }
 
 export async function fetchBuilding(id: number, baseUrl: string = API_BASE_URL): Promise<Building> {

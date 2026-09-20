@@ -35,15 +35,26 @@ def png_response(_request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, headers={"content-type": "image/png"}, content=PNG)
 
 
+def wired(app: FastAPI) -> bool:
+    """Czy main.py juz podlaczyl router ortofoto.
+
+    FastAPI 0.141 pakuje `include_router` w obiekt `_IncludedRouter`, wiec ani `app.routes`, ani
+    `app.url_path_for` nie widza sciezek podrouterow — jedynym publicznym spisem jest OpenAPI.
+    Cache schematu zerujemy, bo zaraz mozemy dopisac trasy.
+    """
+    paths = app.openapi()["paths"]
+    app.openapi_schema = None
+    return TILE_TEMPLATE in paths
+
+
 def app_with(
     handler: Callable[[httpx.Request], httpx.Response],
     pool: FakePool | None = None,
     max_parallel: int = 4,
 ) -> FastAPI:
     app = create_app(SETTINGS, pool_factory=lambda _settings: pool or FakePool())
-    # Router doklejamy tylko wtedy, gdy main.py jeszcze go nie podlaczyl — inaczej mielibysmy
-    # dwie kopie tych samych tras.
-    if not any(getattr(route, "path", "") == TILE_TEMPLATE for route in app.routes):
+    # Podlaczamy sami tylko dopoki main.py tego nie robi — inaczej byly by dwie kopie tras.
+    if not wired(app):
         app.include_router(imagery_routes.router, prefix="/api")
     app.state.imagery = ImageryClient(
         base_url="https://wms.test/orto",
@@ -99,6 +110,8 @@ def test_getmap_uses_wms_130_in_web_mercator() -> None:
     assert params["STYLES"] == ""
     assert params["BBOX"] == "1.000,2.000,3.000,4.000"
     assert params["WIDTH"] == "256"
+    # Bez tego kafel poza zasiegiem nalotu przychodzi bialy i zakrywa podklad OSM.
+    assert params["TRANSPARENT"] == "TRUE"
 
 
 def test_only_a_real_png_counts_as_an_image() -> None:

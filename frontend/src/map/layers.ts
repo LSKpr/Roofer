@@ -25,16 +25,25 @@ export const POINT_MIN_ZOOM = 8
 export const SOURCE_MAX_ZOOM = 16
 
 /**
+ * Te same hexy co tokeny `--color-listed` i `--color-not-listed` w index.css. MapLibre nie czyta
+ * zmiennych CSS, wiec kolory mapy musza byc tu zdublowane — zmieniajac jedno, zmien drugie.
+ *
  * Czerwony = zgloszony w rejestrze, szary = niezgloszony. Szary, nie zielony, bo brak wpisu
  * w rejestrze nie jest dowodem czystego dachu — zielony sugerowalby, ze budynek jest sprawdzony.
  */
 export const STATUS_COLORS = {
-  listed: '#EF4444',
-  notListed: '#64748B',
+  listed: '#C8102E',
+  notListed: '#9AA5AD',
 }
 
-/** Zolty wyraznie odcina sie od obu kolorow statusu i od podkladu OSM. */
-export const SELECTED_COLOR = '#FACC15'
+/** Kolor akcentu interfejsu (`--color-accent`): wybor to stan interfejsu, nie cecha danych. */
+export const SELECTED_COLOR = '#2251FF'
+
+/**
+ * Niezgloszone budynki sa tlem, a nie wynikiem: sa tylko obwiedzione i lekko przygaszone, zeby
+ * czerwien zgloszonych czytalo sie od razu. Na ortofoto pelne wypelnienie zakryloby dach.
+ */
+export const FILL_OPACITY: ExpressionSpecification = ['case', ['get', 'listed'], 0.62, 0.22]
 
 export const buildingsSource: SourceSpecification = {
   type: 'vector',
@@ -77,8 +86,7 @@ export const buildingsFillLayer: FillLayerSpecification = {
   minzoom: POLYGON_MIN_ZOOM,
   paint: {
     'fill-color': statusColor,
-    // Podklad OSM musi byc czytelny pod wypelnieniem.
-    'fill-opacity': 0.6,
+    'fill-opacity': FILL_OPACITY,
   },
 }
 
@@ -90,7 +98,8 @@ export const buildingsOutlineLayer: LineLayerSpecification = {
   minzoom: POLYGON_MIN_ZOOM,
   paint: {
     'line-color': statusColor,
-    'line-width': 0.8,
+    // Wlosowa linia jak w interfejsie; zgloszone dostaja wyrazniejszy obrys.
+    'line-width': ['case', ['get', 'listed'], 1.2, 0.7],
   },
 }
 

@@ -1,7 +1,50 @@
 @import 'tailwindcss';
 
+/**
+ * Jezyk wizualny: raport doradczy, nie panel sterowania.
+ *
+ * Zasady, ktorych trzymaja sie wszystkie komponenty:
+ * jasne tlo i duzo swiatla, jeden akcent, wlosowe linie zamiast cieni, promien 2 px zamiast
+ * zaokraglen, mikropodpisy kapitalikami z rozstrzeleniem, cyfry i naglowki szeryfowe.
+ * Zadnych gradientow, szkla ani kolorowych plakietek poza statusem.
+ */
+@theme {
+  --color-ink: #051c2c;
+  --color-ink-muted: #5a6872;
+  --color-ink-faint: #8c959d;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f4f5f6;
+  --color-hairline: #e1e4e6;
+  --color-accent: #2251ff;
+
+  /* Status w rejestrze. Czerwien stonowana, redakcyjna, nie ostrzegawcza. Szarosc dla
+     niezgloszonych, nigdy zielen: zielen znaczylaby „czysty", a my wiemy tylko, ze nikt
+     tego budynku nie zglosil. */
+  --color-listed: #c8102e;
+  --color-not-listed: #9aa5ad;
+
+  --radius-card: 2px;
+  --font-display: Georgia, 'Times New Roman', serif;
+}
+
 html,
 body,
 #root {
   height: 100%;
+}
+
+body {
+  background-color: var(--color-surface-muted);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/** Mikropodpis nad liczba albo polem: 10 px, kapitaliki, rozstrzelenie. */
+.label-micro {
+  font-size: 0.625rem;
+  line-height: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
 }

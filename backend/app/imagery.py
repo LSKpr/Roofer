@@ -97,7 +97,13 @@ def square_bbox(bbox: Bbox, margin: float = ROOF_MARGIN, min_span_m: float = ROO
 
 
 def getmap_params(bbox: Bbox, width: int, height: int, layer: str) -> dict[str, str]:
-    """Parametry GetMap. STYLES musi byc obecne i puste — brak tego parametru to blad w 1.3.0."""
+    """Parametry GetMap. STYLES musi byc obecne i puste — brak tego parametru to blad w 1.3.0.
+
+    TRANSPARENT=TRUE nie jest kosmetyka: poza zasiegiem nalotu GUGiK oddaje kafel bialy i
+    nieprzezroczysty, ktory zakrylby podklad OSM. Rozkodowanie PNG-a potwierdzilo, ze z TRUE te
+    same piksele maja alfa 0 (a nad Warszawa alfa 255), wiec dziury w ortofoto pokazuja mape pod nia.
+    Cena to okolo 15% wiekszy PNG.
+    """
     return {
         "SERVICE": "WMS",
         "VERSION": WMS_VERSION,
@@ -109,7 +115,7 @@ def getmap_params(bbox: Bbox, width: int, height: int, layer: str) -> dict[str, 
         "WIDTH": str(width),
         "HEIGHT": str(height),
         "FORMAT": IMAGE_MEDIA_TYPE,
-        "TRANSPARENT": "FALSE",
+        "TRANSPARENT": "TRUE",
     }
 
 
