@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { AreaAnalysis, AreaAnalysisStats, SuspectedRoof } from '../api/client'
-import { effectiveThreshold, recountStats, selectFlaggedNotListed } from './modelStats'
+import { effectiveThreshold, recountStats, scoreHistogram, selectFlaggedNotListed } from './modelStats'
 
 function aRoof(id: number, probability: number, listed: boolean, areaM2: number): SuspectedRoof {
   return { id, probability, listed, areaM2, geometry: null }
@@ -267,4 +267,99 @@ it('przy przycietej odpowiedzi opisuje tylko dachy, ktore przyszly', () => {
   // Liczby zostaja backendowe (120 w calym obszarze), a lista zna tylko oceny, ktore przyszly.
   expect(pickedIds(truncated, truncated.stats.threshold)).toEqual([302, 303])
   expect(recountStats(truncated, truncated.stats.threshold).suspectedNotListed).toBe(120)
+})
+
+/** Same liczby z koszykow: w histogramie liczy sie to, ile dachow wpadlo gdzie. */
+function histogramCounts(scores: number[], bucketCount?: number): number[] {
+  return scoreHistogram(scores, bucketCount).map((bucket) => bucket.count)
+}
+
+it('dzieli oceny na dwadziescia koszykow po 0,05', () => {
+  const buckets = scoreHistogram([0.5])
+
+  expect(buckets).toHaveLength(20)
+  expect(buckets[0]).toEqual({ from: 0, to: 0.05, count: 0 })
+  expect(buckets[3]).toEqual({ from: 0.15, to: 0.2, count: 0 })
+  expect(buckets[10]).toEqual({ from: 0.5, to: 0.55, count: 1 })
+  expect(buckets[19]).toEqual({ from: 0.95, to: 1, count: 0 })
+})
+
+// Recznie policzony przyklad: 0 i 0,04 w pierwszym koszyku, 0,05 w drugim (granica nalezy do
+// gornego koszyka), 0,1 w trzecim, 0,18 w czwartym, 0,5 w jedenastym, 0,95 i 1 w ostatnim.
+it('liczy dachy w koszykach na recznie policzonym przykladzie', () => {
+  const counts = histogramCounts([0, 0.04, 0.05, 0.1, 0.18, 0.5, 0.95, 1])
+
+  expect(counts[0]).toBe(2)
+  expect(counts[1]).toBe(1)
+  expect(counts[2]).toBe(1)
+  expect(counts[3]).toBe(1)
+  expect(counts[10]).toBe(1)
+  expect(counts[19]).toBe(2)
+  // Pozostale koszyki zostaja puste, a nie „prawie puste".
+  expect(counts.filter((count) => count > 0)).toHaveLength(6)
+})
+
+/*
+ * Granica koszyka. Ocena rowna granicy nalezy do koszyka, ktory sie od niej zaczyna, i wchodzi
+ * tam DOKLADNIE raz — ten test pada przy zamianie warunku `score >= bucket.from` na `>`.
+ *
+ * 0,15 i 0,7 nie sa ozdoba: to oceny, na ktorych mnozenie przez 20 w double schodzi ponizej
+ * calkowitej (2,9999999999999996 zamiast 3), wiec liczenie koszyka przez `Math.floor` bez
+ * zaokraglonych granic wpuszczaloby je o koszyk nizej.
+ */
+it('ocene rowna granicy koszyka liczy w jednym koszyku, nie w dwoch', () => {
+  expect(histogramCounts([0.05])[1]).toBe(1)
+  expect(histogramCounts([0.05])[0]).toBe(0)
+  expect(histogramCounts([0.15])[3]).toBe(1)
+  expect(histogramCounts([0.15])[2]).toBe(0)
+  expect(histogramCounts([0.7])[14]).toBe(1)
+  expect(histogramCounts([0.7])[13]).toBe(0)
+})
+
+// Suma slupkow jest liczba ocenionych dachow — inaczej wykres opisywalby inny obszar niz liczby
+// nad nim. Oceny z granic koszykow sa tu po to, zeby zadna nie policzyla sie dwa razy ani zero.
+it('sumuje sie do liczby ocen, takze przy ocenach na granicach', () => {
+  const scores = [0, 0.05, 0.1, 0.15, 0.2, 0.35, 0.5, 0.7, 0.95, 1, 0.999, 0.049]
+
+  const total = histogramCounts(scores).reduce((sum, count) => sum + count, 0)
+
+  expect(total).toBe(scores.length)
+})
+
+// Ocena 1 nie wpada w zaden przedzial polotwarty, a jest ocena: ostatni koszyk domyka sie na niej.
+it('ocene 1 liczy w ostatnim koszyku, a nie poza wykresem', () => {
+  expect(histogramCounts([1])[19]).toBe(1)
+  expect(histogramCounts([1]).reduce((sum, count) => sum + count, 0)).toBe(1)
+})
+
+it('suma koszykow rowna sie liczbie ocenionych dachow z odpowiedzi', () => {
+  const scores = ROOFS.map((roof) => roof.probability)
+
+  const total = histogramCounts(scores).reduce((sum, count) => sum + count, 0)
+
+  expect(total).toBe(BACKEND_STATS.analysed)
+})
+
+it('pusta lista ocen daje same puste koszyki, a nie pusta tablice', () => {
+  const buckets = scoreHistogram([])
+
+  expect(buckets).toHaveLength(20)
+  expect(buckets.every((bucket) => bucket.count === 0)).toBe(true)
+})
+
+// Liczba koszykow jest parametrem, bo o gestosc siatki decyduje widok, a nie ta funkcja.
+it('przyjmuje inna liczbe koszykow i trzyma te sama regule granicy', () => {
+  const counts = histogramCounts([0.1, 0.19, 0.2], 10)
+
+  expect(counts).toHaveLength(10)
+  expect(counts[1]).toBe(2)
+  expect(counts[2]).toBe(1)
+})
+
+// Ocena spoza 0-1 nie ma prawa przyjsc z modelu, ale gdyby przyszla, nie moze wyparowac z sumy.
+it('oceny spoza zakresu wpuszcza do skrajnych koszykow, zamiast je gubic', () => {
+  const counts = histogramCounts([-0.2, 1.4])
+
+  expect(counts[0]).toBe(1)
+  expect(counts[19]).toBe(1)
 })

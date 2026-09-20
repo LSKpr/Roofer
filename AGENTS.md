@@ -281,6 +281,43 @@ to samo, innymi słowami: że model porównuje wygląd pokrycia na zdjęciu sate
 „właściciel zataił" — i wprost, że to jest **lista do sprawdzenia w terenie, nie lista ustaleń**.
 Zdania nie znikają, gdy lista jest pusta, bo dotyczą sekcji, nie wierszy.
 
+### Warstwa wizualna: dowód, rozkład i widoczny postęp
+
+Trzy rzeczy dodane po to, żeby wynik modelu dał się **zobaczyć**, a nie tylko przeczytać. Każda
+z nich pokazuje dane, które i tak mamy — żadna nie dorysowuje niczego, czego nie policzyliśmy.
+
+**Miniatury dachów na liście z flagą** (`FlaggedRoofTile.tsx`): siatka trzech kolumn z prawdziwymi
+wycinkami ortofoto, 128 px (najmniejszy rozmiar, jaki przyjmuje `ROOF_MIN_SIZE` w `app/imagery.py`),
+leniwie wczytywane, ze stałą proporcją kwadratu, żeby siatka nie skakała. Brak zdjęcia (503 z GUGiK)
+**nie usuwa dachu z listy** — zostaje ocena, powierzchnia i klikalność, bo dach bez zdjęcia jest
+nadal dachem do sprawdzenia. Pod siatką stoi zdanie, że miniatury są z ortofotomapy GUGiK i pokazują
+stan z nalotu, a **nie** kadr Google z zoomu 20, który oceniał model. Bez niego ktoś porównałby ocenę
+z innym zdjęciem i wyciągnął wniosek z dwóch różnych źródeł.
+
+**Histogram ocen pod suwakiem** (`ScoreHistogram.tsx`, koszyki liczy `scoreHistogram` w
+`lib/modelStats.ts`): 20 koszyków po 0,05, czyli **dokładnie krok suwaka** — przy tej samej siatce
+próg zawsze wypada na granicy koszyka i przemalowanie dzieli słupki w progu, a nie w poprzek
+któregoś. Skala **liniowa**, świadomie: skupisko przy zerze jest informacją (większość dachów nie
+przypomina falistej płyty), a logarytm spłaszczyłby je i rzadkie wysokie oceny wyglądałyby na
+liczniejsze, niż są. Jedyne odstępstwo to `min-h-px` dla niepustego koszyka, bo inaczej koszyk
+z jednym dachem obok skupiska trzystu znika i kłamie w drugą stronę. Podpis mówi, że to rozkład
+**tylko ocenionych** dachów, a brak oceny nie jest oceną zero.
+
+Linii progu **nie udało się zgrać co do piksela z uchwytem** natywnego `<input type="range">`: środek
+uchwytu jedzie od połowy jego szerokości do szerokości toru minus połowa, czyli do ~8 px do wewnątrz
+na końcach skali. Zgranie wymagałoby własnego uchwytu osobno dla WebKita i Gecko, czego ten suwak
+nie robi. Linia została, bo granica kolorów słupków i tak stoi w tej samej osi — rezygnacja
+z linii nie usunęłaby rozjazdu, tylko zabrała wykresowi czytelną granicę. Opisane w komentarzu.
+
+**Widoczne przemiatanie obszaru** (`SUSPECTED_*` i nowe `CHUNK_*` w `map/layers.ts`): kawałek liczony
+w tej chwili ma przerywany obrys w kolorze akcentu (2,25 px — między obrysem skanu 1,75 i obrysem
+modelu 2,75, więc postęp jest widoczny, ale nie mocniejszy od wyniku), a kawałki policzone samo lekkie
+wypełnienie 0,08. Efekt przemiatania robi różnica krycia: fragment nietknięty ~0,06, policzony ~0,14,
+liczony teraz ~0,21. Obie warstwy są **nieklikalne** i stoją **pod** obrysami modelu i podświetleniem
+wyboru. Po ostatnim kawałku znikają (zostaje sam wynik), ale **przy błędzie kawałka policzone
+zostają** — wtedy właśnie pokazują, ile obszaru model obejrzał, zanim się wywalił. Przy planie
+z jednym kawałkiem nie rysujemy nic, bo to ten sam prostokąt, który już jest na mapie.
+
 ### Strumieniowanie: `POST /api/area/plan` i analiza kawałkami
 
 Model przyjmuje 500 budynków na żądanie, a skan sięga 25 km², więc obszar dzielimy na kawałki

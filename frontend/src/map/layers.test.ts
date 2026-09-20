@@ -1,6 +1,17 @@
 import { expect, it } from 'vitest'
 import { TILES_URL } from '../api/client'
 import {
+  ABOVE_CHUNK_CURRENT_LAYER_IDS,
+  ABOVE_CHUNK_DONE_LAYER_IDS,
+  CHUNK_CURRENT_DASHARRAY,
+  CHUNK_CURRENT_FILL_OPACITY,
+  CHUNK_CURRENT_LAYERS,
+  CHUNK_CURRENT_LINE_WIDTH,
+  CHUNK_CURRENT_SOURCE_ID,
+  CHUNK_DONE_FILL_OPACITY,
+  CHUNK_DONE_LAYERS,
+  CHUNK_DONE_SOURCE_ID,
+  CHUNK_LAYER_IDS,
   CLICKABLE_LAYER_IDS,
   DENSITY_COUNT_PROPERTY,
   FILL_OPACITY,
@@ -38,6 +49,9 @@ import {
   buildingsFillLayer,
   buildingsOutlineLayer,
   buildingsSource,
+  chunkCurrentFillLayer,
+  chunkCurrentOutlineLayer,
+  chunkDoneFillLayer,
   fillColor,
   listedDensityLayer,
   outlineColor,
@@ -455,4 +469,106 @@ it('keeps one feature per roof, in the order the model gave them', () => {
   const collection = suspectedRoofsCollection([ROOF, second])
 
   expect(collection.features.map((feature) => feature.id)).toEqual([ROOF.id, second.id])
+})
+
+// Piata rodzina warstw na tej samej mapie: postep analizy obszaru. Wspolny identyfikator znaczylby,
+// ze jedna rodzina po cichu nadpisuje druga — a postep stoi na mapie razem z prostokatem skanu,
+// z wynikiem modelu i (przy nowym zaznaczeniu) z podgladem rysowania.
+it('keeps the chunk ids disjoint from every other family on the map', () => {
+  const ids = [...Object.values(CHUNK_LAYER_IDS), CHUNK_CURRENT_SOURCE_ID, CHUNK_DONE_SOURCE_ID]
+  for (const id of ids) {
+    expect(Object.values(LAYER_IDS)).not.toContain(id)
+    expect(Object.values(DRAW_LAYER_IDS)).not.toContain(id)
+    expect(Object.values(SCAN_AREA_LAYER_IDS)).not.toContain(id)
+    expect(Object.values(SUSPECTED_LAYER_IDS)).not.toContain(id)
+    expect(id).not.toBe(SOURCE_ID)
+    expect(id).not.toBe(DRAW_SOURCE_ID)
+    expect(id).not.toBe(SCAN_AREA_SOURCE_ID)
+    expect(id).not.toBe(SUSPECTED_SOURCE_ID)
+  }
+  expect(new Set(ids).size).toBe(ids.length)
+  // Postep nie jest dana z kafla, wiec nie wchodzi miedzy warstwy budynkow.
+  expect(MAP_LAYERS.map((layer) => layer.id)).not.toContain(CHUNK_LAYER_IDS.currentFill)
+  expect(MAP_LAYERS.map((layer) => layer.id)).not.toContain(CHUNK_LAYER_IDS.doneFill)
+})
+
+// Aktualny kawalek ma powiedziec „tutaj model patrzy teraz", wiec dostaje wyrazna ramke
+// w kolorze akcentu — z tej samej stalej, ktorej uzywa prostokat skanu i podglad rysowania.
+it('marks the chunk under analysis with a dashed accent frame and a light fill', () => {
+  expect(chunkCurrentOutlineLayer.paint?.['line-color']).toBe(SELECTED_COLOR)
+  expect(chunkCurrentFillLayer.paint?.['fill-color']).toBe(SELECTED_COLOR)
+  // Przerywana, jak podglad rysowania: znaczy „to sie dzieje teraz", a nie „to jest wynik".
+  expect(chunkCurrentOutlineLayer.paint?.['line-dasharray']).toBe(CHUNK_CURRENT_DASHARRAY)
+  expect(CHUNK_CURRENT_DASHARRAY.length).toBeGreaterThan(1)
+  expect(chunkCurrentFillLayer.paint?.['fill-opacity']).toBe(CHUNK_CURRENT_FILL_OPACITY)
+  // Lekkie: pod spodem leza dachy, ktore model wlasnie oglada.
+  expect(CHUNK_CURRENT_FILL_OPACITY).toBeGreaterThan(0)
+  expect(CHUNK_CURRENT_FILL_OPACITY).toBeLessThan(0.25)
+})
+
+// Ramka postepu musi byc mocniejsza od obrysu zeskanowanego obszaru (inaczej zginelaby na nim),
+// ale slabsza od obrysu modelu: wynik zostaje, a postep jest informacja na minute.
+it('draws the current chunk frame between the scanned area and the model outlines', () => {
+  expect(chunkCurrentOutlineLayer.paint?.['line-width']).toBe(CHUNK_CURRENT_LINE_WIDTH)
+  expect(CHUNK_CURRENT_LINE_WIDTH).toBeGreaterThan(SCAN_AREA_LINE_WIDTH)
+  expect(CHUNK_CURRENT_LINE_WIDTH).toBeLessThan(SUSPECTED_LINE_WIDTH)
+})
+
+// Policzone kawalki to samo wypelnienie: siatka ramek w srodku zaznaczenia byla by szumem,
+// a cala tresc tej warstwy to „tu model juz byl".
+it('fills the analysed chunks without drawing a frame around each of them', () => {
+  expect(CHUNK_DONE_LAYERS.map((layer) => layer.type)).toEqual(['fill'])
+  expect(CHUNK_DONE_LAYERS.map((layer) => layer.id)).toEqual([CHUNK_LAYER_IDS.doneFill])
+  expect(JSON.stringify(CHUNK_DONE_LAYERS)).not.toContain('line')
+  expect(chunkDoneFillLayer.paint?.['fill-color']).toBe(SELECTED_COLOR)
+})
+
+// Zaznaczenie ma sie „wypelniac" od zachodu na wschod, wiec policzony fragment musi byc widocznie
+// inny od tego, ktory czeka (samo wypelnienie obszaru skanu), i slabszy od liczonego teraz.
+it('keeps the analysed fill between the untouched area and the chunk under analysis', () => {
+  expect(chunkDoneFillLayer.paint?.['fill-opacity']).toBe(CHUNK_DONE_FILL_OPACITY)
+  expect(CHUNK_DONE_FILL_OPACITY).toBeGreaterThan(0)
+  expect(CHUNK_DONE_FILL_OPACITY).toBeLessThan(CHUNK_CURRENT_FILL_OPACITY)
+  // Lzejsze niz podglad rysowania (0,12), ktory zyje sekunde — to wypelnienie zostaje na minuty.
+  expect(CHUNK_DONE_FILL_OPACITY).toBeLessThan(Number(drawFillLayer.paint?.['fill-opacity']))
+})
+
+it('reads both chunk layers from their own geojson sources', () => {
+  for (const layer of CHUNK_CURRENT_LAYERS) {
+    expect('source' in layer ? layer.source : undefined).toBe(CHUNK_CURRENT_SOURCE_ID)
+    // Zrodlo jest wlasne (GeoJSON z `Bounds`), wiec warstwa nie ma `source-layer` z kafla.
+    expect('source-layer' in layer ? layer['source-layer'] : undefined).toBeUndefined()
+  }
+  for (const layer of CHUNK_DONE_LAYERS) {
+    expect('source' in layer ? layer.source : undefined).toBe(CHUNK_DONE_SOURCE_ID)
+    expect('source-layer' in layer ? layer['source-layer'] : undefined).toBeUndefined()
+  }
+  // Dwa zrodla, nie jedno: aktualny kawalek podmienia sie w miejscu, a policzone tylko rosna.
+  expect(CHUNK_CURRENT_SOURCE_ID).not.toBe(CHUNK_DONE_SOURCE_ID)
+})
+
+// Kolejnosc w stosie: postep wchodzi POD wynik modelu i POD podswietlenie wyboru. `beforeId`
+// bierze pierwsza istniejaca warstwe z listy, wiec kolejnosc w liscie jest kolejnoscia od dolu.
+it('puts the progress under the model outlines and under the selected building', () => {
+  expect(ABOVE_CHUNK_CURRENT_LAYER_IDS).toEqual([SUSPECTED_LAYER_IDS.outline, ...HIGHLIGHT_LAYER_IDS])
+  // Policzone jeszcze nizej: pod aktualnym kawalkiem, zeby jego ramka zostala czytelna.
+  expect(ABOVE_CHUNK_DONE_LAYER_IDS).toEqual([
+    CHUNK_LAYER_IDS.currentFill,
+    CHUNK_LAYER_IDS.currentOutline,
+    ...ABOVE_CHUNK_CURRENT_LAYER_IDS,
+  ])
+  // Zadna warstwa postepu nie moze byc celem dla samej siebie.
+  expect(ABOVE_CHUNK_CURRENT_LAYER_IDS).not.toContain(CHUNK_LAYER_IDS.currentFill)
+  expect(ABOVE_CHUNK_CURRENT_LAYER_IDS).not.toContain(CHUNK_LAYER_IDS.doneFill)
+  expect(ABOVE_CHUNK_DONE_LAYER_IDS).not.toContain(CHUNK_LAYER_IDS.doneFill)
+})
+
+// Test-straznik: oba prostokaty przykrywaja fragmenty zaznaczenia, wiec klikalne przejmowalyby
+// klikniecia w budynki pod spodem — a karta budynku otwiera sie z warstwy wypelnienia.
+it('never makes the analysis progress clickable', () => {
+  for (const id of Object.values(CHUNK_LAYER_IDS)) {
+    expect(CLICKABLE_LAYER_IDS).not.toContain(id)
+    expect(HIGHLIGHT_LAYER_IDS).not.toContain(id)
+  }
+  expect(CLICKABLE_LAYER_IDS).toEqual([LAYER_IDS.fill])
 })

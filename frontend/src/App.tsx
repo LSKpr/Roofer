@@ -191,6 +191,11 @@ export function App() {
       ? `Select a rectangle, max ${KM2_FORMAT.format(limitKm2)} km²`
       : 'Select a rectangle on the map'
 
+  /*
+   * Postep analizy idzie prosto z hooka na mape, bez wlasnego stanu po drodze: to samo zrodlo,
+   * ktore daje panelowi licznik „3 z 7", daje mapie prostokaty tych trzech kawalkow. Druga kopia
+   * tej informacji rozjechalaby sie i mapa pokazywalaby inny fragment, niz mowi panel.
+   */
   return (
     <div className="relative h-full w-full">
       <MapView
@@ -205,6 +210,8 @@ export function App() {
         scannedArea={scannedArea}
         showRegistry={showRegistry}
         suspectedRoofs={suspectedRoofs}
+        analysingChunk={analysis.analysingChunk}
+        analysedChunks={analysis.analysedChunks}
       />
 
       {/* Warstwa paneli nie przechwytuje przeciagania mapy — klikalne sa tylko same panele. */}

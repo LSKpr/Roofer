@@ -6,6 +6,7 @@ type Options = {
   value?: number
   onChange?: (value: number) => void
   modelDefault?: number
+  scores?: number[]
   className?: string
 }
 
@@ -15,6 +16,7 @@ function renderSlider(options: Options = {}) {
       value={options.value ?? 0.5}
       onChange={options.onChange ?? (() => {})}
       modelDefault={options.modelDefault ?? 0.5}
+      scores={options.scores ?? []}
       className={options.className}
     />,
   )
@@ -93,4 +95,50 @@ it('przyjmuje klase od rodzica, bo odstepy sa decyzja panelu', () => {
   const view = renderSlider({ className: 'mb-3' })
 
   expect((view.container.firstChild as HTMLElement).className).toContain('mb-3')
+})
+
+// Sam suwak jest galka bez kontekstu: „60%" nie mowi, czy odcina dwa dachy, czy dwiescie.
+it('pokazuje rozklad ocen, gdy sa oceny', () => {
+  renderSlider({ scores: [0.1, 0.52, 0.9] })
+
+  expect(screen.getByTestId('score-histogram')).toBeDefined()
+  expect(screen.getAllByTestId('score-bucket')).toHaveLength(20)
+})
+
+// Wykres i tor suwaka musza czytac sie w jednej osi, wiec miedzy polem a slupkami nie ma niczego.
+it('stawia rozklad tuz pod torem suwaka', () => {
+  renderSlider({ scores: [0.1, 0.52] })
+
+  const afterInput = slider().nextElementSibling as HTMLElement
+
+  expect(afterInput.querySelector('[data-testid="score-histogram"]')).not.toBeNull()
+})
+
+// Bez ocen nie ma rozkladu, a pusta ramka pod suwakiem wygladalaby jak rozklad rowny zeru.
+it('nie rysuje rozkladu, gdy nie ma ani jednej oceny', () => {
+  renderSlider({ scores: [] })
+
+  expect(screen.queryByTestId('score-histogram')).toBeNull()
+  expect(slider().type).toBe('range')
+})
+
+// Prog na wykresie to ta sama liczba, ktora stoi na suwaku — inaczej kolory opisywalyby inny prog
+// niz liczby w panelu.
+it('dzieli kolory slupkow dokladnie na wartosci suwaka', () => {
+  renderSlider({ value: 0.6, scores: [0.55, 0.6] })
+
+  const cells = screen.getAllByTestId('score-bucket')
+
+  expect((cells[11].firstElementChild as HTMLElement).className).toContain('bg-not-listed')
+  expect((cells[12].firstElementChild as HTMLElement).className).toContain('bg-suspected')
+  expect(screen.getByTestId('score-threshold-line').getAttribute('style')).toContain('left: 60%')
+})
+
+// Histogram jest ilustracja: kontrolka zostaje jedna i ma etykiete, ktora czyta czytnik ekranu.
+it('nie tworzy drugiego suwaka razem z wykresem', () => {
+  renderSlider({ scores: [0.1, 0.52, 0.9] })
+
+  expect(screen.getAllByRole('slider')).toHaveLength(1)
+  expect(screen.getByLabelText('Suspicion threshold')).toBe(slider())
+  expect(screen.getByTestId('score-histogram').getAttribute('aria-hidden')).toBe('true')
 })

@@ -1,4 +1,5 @@
 import type { SuspectedRoof } from '../api/client'
+import { FlaggedRoofTile } from './FlaggedRoofTile'
 
 type FlaggedRoofsProps = {
   /**
@@ -14,16 +15,17 @@ type FlaggedRoofsProps = {
    */
   total: number
   onPick: (id: number) => void
-  /** Ile wierszy pokazac; reszte opisuje zdanie pod lista. */
+  /** Ile kafelkow pokazac; reszte opisuje zdanie pod siatka. */
   limit?: number
 }
 
 const NUMBER_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 
 /**
- * Gorna dlugosc listy. Dwadziescia piec wierszy to tyle, ile da sie przejrzec w jednym
- * posiedzeniu; przy 120 pozycjach dluga lista i tak konczy sie przewijaniem bez czytania,
- * a liczby nad nia opisuja caly obszar.
+ * Gorna dlugosc listy. Dwadziescia piec kafelkow to tyle, ile da sie przejrzec w jednym
+ * posiedzeniu; przy 120 pozycjach dluga lista i tak konczy sie przewijaniem bez patrzenia,
+ * a liczby nad nia opisuja caly obszar. To jednoczesnie gorna liczba zdjec, o ktore siatka
+ * pyta naraz nasz backend.
  */
 const ROW_LIMIT = 25
 
@@ -49,6 +51,15 @@ const REGISTER_NOTE =
 const FIELD_NOTE = 'This is a list to check on site, not a list of findings.'
 
 /**
+ * Miniatury i ocena pochodza z dwoch roznych zdjec: kadr w siatce jest z ortofotomapy GUGiK,
+ * a model ocenial zdjecie Google Satellite z zoomu 20 — inne zrodlo i inny moment. Bez tego
+ * zdania ktos porowna ocene z obrazkiem i uzna, ze model sie myli (albo ze ma racje) na
+ * podstawie zdjecia, ktorego model nigdy nie widzial.
+ */
+const IMAGE_SOURCE_NOTE =
+  'The thumbnails come from the GUGiK orthophoto and show the roof as it looked during the aerial survey, not the Google Satellite frame at zoom 20 that the model scored.'
+
+/**
  * Pusta lista jest stanem progu, a nie werdyktem o obszarze — sama pustka wygladalaby jak
  * „nic tu nie ma", wiec mowimy to zdaniem i podpowiadamy, co zrobic.
  */
@@ -64,26 +75,22 @@ function truncationNote(shown: number, total: number): string {
   return `The list is truncated: showing ${counts} roofs — the numbers above cover the whole area.`
 }
 
-/** Ocena przychodzi jako ulamek 0–1; w wierszu czyta sie ja jako liczbe calkowita procent. */
-function scoreLabel(probability: number): string {
-  return `${Math.round(probability * 100)}%`
-}
-
-function areaLabel(squareMeters: number): string {
-  return `${NUMBER_FORMAT.format(squareMeters)} m²`
-}
-
 /**
  * Lista dachow, ktorych nikt nie zglosil, a model cos na nich widzi — wlasciwy produkt tej
- * aplikacji: liczba „120" mowi o skali, a dopiero te wiersze da sie objechac.
+ * aplikacji: liczba „120" mowi o skali, a dopiero te kafelki da sie objechac.
+ *
+ * Siatka miniatur, nie wiersze liczb: dwadziescia piec wycinkow ortofoto obok siebie przekonuje
+ * dowodem, a nie grafika — widac, ze pod ocena stoi konkretny dach. Kazdy kafelek niesie swoja
+ * ocene i powierzchnie, wiec kadr, ktorego GUGiK nie oddal, nie wypada z listy.
  *
  * Komponent jest czysto prezentacyjny, jak `ThresholdSlider`: dostaje gotowa liste i `onPick`,
  * wiec nie ma wlasnego pojecia o progu ani o tym, co znaczy „podejrzany". Dzieki temu suwak
  * dziala na te liste natychmiast — rodzic przelicza wybor z ocen, ktore juz ma, bez zapytania
  * do modelu (tamta instancja przyjmuje 10 zapytan na minute).
  *
- * Identyfikator OSM stoi w wierszu jako drobny podpis, bo to on jest adresem tego dachu w calej
- * reszcie aplikacji: klik otwiera karte budynku z wycinkiem ortofoto i pelna nota modelu.
+ * Identyfikator OSM stoi pod kafelkiem jako drobny podpis, bo to on jest adresem tego dachu
+ * w calej reszcie aplikacji: klik otwiera karte budynku z duzym wycinkiem ortofoto i pelna nota
+ * modelu.
  */
 export function FlaggedRoofs({ roofs, total, onPick, limit = ROW_LIMIT }: FlaggedRoofsProps) {
   const shown = roofs.slice(0, limit)
@@ -97,33 +104,20 @@ export function FlaggedRoofs({ roofs, total, onPick, limit = ROW_LIMIT }: Flagge
       {shown.length === 0 ? (
         <p className="mt-2 text-ink-muted">{EMPTY_NOTE}</p>
       ) : (
-        // Lista bywa dluga, wiec przewija sie sama, a liczby modelu zostaja widoczne nad nia.
-        <ul className="mt-2 max-h-56 overflow-y-auto">
-          {shown.map((roof) => (
-            <li key={roof.id} className="border-t border-hairline first:border-t-0">
-              {/* Klikalny jest caly wiersz, nie tekst w nim: celem jest ten dach, nie jego numer. */}
-              <button
-                type="button"
-                onClick={() => onPick(roof.id)}
-                className="flex w-full items-center justify-between gap-4 py-2 text-left hover:bg-surface-muted"
-              >
-                <span className="flex shrink-0 items-center gap-2">
-                  {/* Ten sam pomaranczowy token, ktorym mapa maluje obrys tego dachu. */}
-                  <span
-                    data-testid="flagged-roof-dot"
-                    className="inline-block h-2 w-2 shrink-0 bg-suspected"
-                    aria-hidden="true"
-                  />
-                  {/* Ocena wyrozniona, bo to ona ustawia kolejnosc: gora listy to pierwszy wyjazd. */}
-                  <span className="font-display text-base leading-none text-ink">{scoreLabel(roof.probability)}</span>
-                  <span className="text-ink-muted">{areaLabel(roof.areaM2)}</span>
-                </span>
-                {/* Identyfikator jest podpisem, nie trescia wiersza, wiec stoi cicho przy krawedzi. */}
-                <span className="label-micro min-w-0 truncate">OSM {roof.id}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          {/* Siatka bywa dluga, wiec przewija sie sama, a liczby modelu zostaja widoczne nad nia.
+              Trzy kolumny, bo panel ma 352 px: wychodzi ~100 px na kadr, czyli miniatura. */}
+          <ul className="mt-2 grid max-h-72 grid-cols-3 gap-1.5 overflow-y-auto">
+            {shown.map((roof) => (
+              <li key={roof.id}>
+                <FlaggedRoofTile id={roof.id} probability={roof.probability} areaM2={roof.areaM2} onPick={onPick} />
+              </li>
+            ))}
+          </ul>
+          {/* Zdanie stoi pod siatka, bo dotyczy tych kadrow: bez niego ocena i obrazek wygladaja
+              na jedno zdjecie, a sa z dwoch roznych zrodel i dwoch roznych momentow. */}
+          <p className="mt-2 text-xs text-ink-faint">{IMAGE_SOURCE_NOTE}</p>
+        </>
       )}
 
       {shown.length < total ? (

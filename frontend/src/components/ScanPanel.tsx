@@ -259,12 +259,18 @@ function ModelNumbers({
   return (
     <div>
       {/* Suwak nad liczbami: najpierw widac, od ktorej oceny liczymy flage, potem ile jej wyszlo.
-          Przy przycietej liscie go nie ma, bo nie przeliczamy — zdanie nizej mowi dlaczego. */}
+          Przy przycietej liscie go nie ma, bo nie przeliczamy — zdanie nizej mowi dlaczego.
+
+          Oceny do rozkladu pod suwakiem ida z odpowiedzi, ktora panel juz ma w rece: model nie
+          jest pytany drugi raz przy ruchu suwaka (przyjmuje 10 zapytan na minute i jedno naraz).
+          Przy `truncated` histogramu tez nie ma i to jest celowe: oceny sa wtedy niepelne, wiec
+          rozklad opisywalby tylko te dachy, ktore przyszly, pod etykietami obiecujacymi obszar. */}
       {analysis.truncated ? null : (
         <ThresholdSlider
           value={stats.threshold}
           onChange={onThresholdChange}
           modelDefault={analysis.stats.threshold}
+          scores={analysis.buildings.map((roof) => roof.probability)}
           className="mb-3.5 border-b border-hairline pb-3.5"
         />
       )}

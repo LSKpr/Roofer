@@ -1,11 +1,17 @@
 import { Map as MapLibreMap, NavigationControl, ScaleControl } from 'maplibre-gl'
-import type { GeoJSONSource } from 'maplibre-gl'
+import type { GeoJSONSource, LayerSpecification } from 'maplibre-gl'
 import { useEffect, useRef } from 'react'
 import type { Bounds } from '../api/client'
-import { attachRectangleDraw, rectanglePolygon, type RectangleDraw } from './rectangleDraw'
+import { attachRectangleDraw, rectanglePolygon, type RectangleDraw, type RectangleFeature } from './rectangleDraw'
 import type { BasemapId } from './basemap'
 import { BASEMAPS, DEFAULT_BASEMAP, INITIAL_CENTER, INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM } from './basemap'
 import {
+  ABOVE_CHUNK_CURRENT_LAYER_IDS,
+  ABOVE_CHUNK_DONE_LAYER_IDS,
+  CHUNK_CURRENT_LAYERS,
+  CHUNK_CURRENT_SOURCE_ID,
+  CHUNK_DONE_LAYERS,
+  CHUNK_DONE_SOURCE_ID,
   CLICKABLE_LAYER_IDS,
   HIGHLIGHT_LAYER_IDS,
   LAYER_IDS,
@@ -67,6 +73,24 @@ export type MapViewProps = {
    * `null` znaczy „nie ma czego pokazywac" i zdejmuje warstwe; pusta lista zostawia ja bez obiektow.
    */
   suspectedRoofs?: SuspectedRoof[] | null
+  /**
+   * Fragment obszaru, ktory model liczy w tej chwili — przerywana ramka z lekkim wypelnieniem.
+   * `null` zdejmuje ja z mapy: przed analiza, po ostatnim kawalku i po bledzie nie ma „teraz".
+   */
+  analysingChunk?: Bounds | null
+  /**
+   * Fragmenty, ktore model juz policzyl — lekkie wypelnienie, ktore „wypelnia" zaznaczenie w miare
+   * postepu. Pusta lista znaczy to samo co `null` i zdejmuje warstwe: inaczej niz przy wyniku
+   * modelu, gdzie pusta lista jest odpowiedzia („nic tu nie widze"), tu nie ma czego rysowac.
+   */
+  analysedChunks?: Bounds[] | null
+}
+
+/** Kawalki w jednym zrodle GeoJSON; pierscien liczy ten sam `rectanglePolygon`, co podglad ramki. */
+type ChunkCollection = { type: 'FeatureCollection'; features: RectangleFeature[] }
+
+function chunkCollection(areas: Bounds[]): ChunkCollection {
+  return { type: 'FeatureCollection', features: areas.map(rectanglePolygon) }
 }
 
 /** Filtr ustawiamy tylko na warstwach, ktore juz istnieja — powstaja dopiero po `style.load`. */
@@ -175,6 +199,68 @@ function applySuspectedRoofs(instance: MapLibreMap, roofs: SuspectedRoof[] | nul
   }
 }
 
+/**
+ * Zdjecie rodziny warstw razem z jej zrodlem. Najpierw warstwy, potem zrodlo: MapLibre nie usunie
+ * zrodla, z ktorego ktos jeszcze czyta. Zrodlo idzie razem z warstwami, zamiast zostac puste —
+ * pusta warstwa nadal odpowiadalaby na zapytania o styl i mieszala w kolejnosci rysowania.
+ */
+function removeLayerFamily(instance: MapLibreMap, layers: LayerSpecification[], sourceId: string) {
+  for (const layer of layers) {
+    if (instance.getLayer(layer.id)) instance.removeLayer(layer.id)
+  }
+  if (instance.getSource(sourceId)) instance.removeSource(sourceId)
+}
+
+/**
+ * Kawalek, ktory model liczy w tej chwili. Przerywana ramka w kolorze akcentu z lekkim
+ * wypelnieniem: „tutaj model patrzy teraz". Bez tej warstwy minuta pracy wyglada na zawieszona,
+ * bo licznik „3 z 7" w panelu nie mowi, ktorego fragmentu dotyczy.
+ *
+ * Warstwy wchodza POD wynik modelu i POD podswietlenie wyboru (`beforeId`): postep jest informacja
+ * tymczasowa, a pomaranczowe obrysy i klikniety budynek maja zostac najmocniejsze na ekranie.
+ * Wywolanie jest odporne na powtorzenie, bo `setStyle` zabiera wszystko dodane recznie.
+ */
+function applyAnalysingChunk(instance: MapLibreMap, chunk: Bounds | null) {
+  if (!chunk) {
+    removeLayerFamily(instance, CHUNK_CURRENT_LAYERS, CHUNK_CURRENT_SOURCE_ID)
+    return
+  }
+  const data = rectanglePolygon(chunk)
+  const source = instance.getSource<GeoJSONSource>(CHUNK_CURRENT_SOURCE_ID)
+  // Kolejny kawalek podmienia dane w tym samym zrodle: usuwanie go co kilkanascie sekund
+  // zabieraloby ze soba warstwy i mrugaloby ramka przy kazdym przeskoku.
+  if (source) source.setData(data)
+  else instance.addSource(CHUNK_CURRENT_SOURCE_ID, { type: 'geojson', data })
+  const before = ABOVE_CHUNK_CURRENT_LAYER_IDS.find((layerId) => instance.getLayer(layerId))
+  for (const layer of CHUNK_CURRENT_LAYERS) {
+    if (!instance.getLayer(layer.id)) instance.addLayer(layer, before)
+  }
+}
+
+/**
+ * Kawalki, ktore model juz policzyl — jedno zrodlo z wieloma prostokatami, bo rosnie tylko lista,
+ * a malowanie kazdego jest takie samo. To ta warstwa robi efekt przemiatania: zaznaczenie
+ * „wypelnia sie" od zachodu na wschod, czyli w kolejnosci, w ktorej plan oddal kawalki.
+ *
+ * Pusta lista zdejmuje warstwe tak samo jak `null`: przed analiza i po jej zakonczeniu „policzone"
+ * nie jest zadna informacja. Miejsce w stosie jest jeszcze nizej niz aktualny kawalek, zeby jego
+ * ramka zostala czytelna na granicy dwoch sasiadujacych prostokatow.
+ */
+function applyAnalysedChunks(instance: MapLibreMap, chunks: Bounds[] | null) {
+  if (!chunks || chunks.length === 0) {
+    removeLayerFamily(instance, CHUNK_DONE_LAYERS, CHUNK_DONE_SOURCE_ID)
+    return
+  }
+  const data = chunkCollection(chunks)
+  const source = instance.getSource<GeoJSONSource>(CHUNK_DONE_SOURCE_ID)
+  if (source) source.setData(data)
+  else instance.addSource(CHUNK_DONE_SOURCE_ID, { type: 'geojson', data })
+  const before = ABOVE_CHUNK_DONE_LAYER_IDS.find((layerId) => instance.getLayer(layerId))
+  for (const layer of CHUNK_DONE_LAYERS) {
+    if (!instance.getLayer(layer.id)) instance.addLayer(layer, before)
+  }
+}
+
 export function MapView({
   selectedId = null,
   onSelect,
@@ -187,6 +273,8 @@ export function MapView({
   scannedArea = null,
   showRegistry = true,
   suspectedRoofs = null,
+  analysingChunk = null,
+  analysedChunks = null,
 }: MapViewProps) {
   const container = useRef<HTMLDivElement | null>(null)
   const map = useRef<MapLibreMap | null>(null)
@@ -200,6 +288,8 @@ export function MapView({
   const scannedAreaRef = useRef(scannedArea)
   const showRegistryRef = useRef(showRegistry)
   const suspectedRoofsRef = useRef(suspectedRoofs)
+  const analysingChunkRef = useRef(analysingChunk)
+  const analysedChunksRef = useRef(analysedChunks)
   const draw = useRef<RectangleDraw | null>(null)
   const styleReady = useRef(false)
   // Styl, ktory mapa juz dostala. Pierwszy dostaje przez konstruktor, wiec `setStyle` na starcie
@@ -216,6 +306,8 @@ export function MapView({
     scannedAreaRef.current = scannedArea
     showRegistryRef.current = showRegistry
     suspectedRoofsRef.current = suspectedRoofs
+    analysingChunkRef.current = analysingChunk
+    analysedChunksRef.current = analysedChunks
   })
 
   useEffect(() => {
@@ -247,6 +339,10 @@ export function MapView({
       // Wynik modelu przezywa zmiane podkladu tak samo jak wynik skanu, a o miejsce w stosie
       // dba `beforeId` — dlatego wolno go dolozyc na koncu, po podswietleniu.
       applySuspectedRoofs(instance, suspectedRoofsRef.current)
+      // Postep analizy tez: zmiana podkladu w trakcie kilkuminutowej pracy nie moze skasowac
+      // informacji o tym, gdzie model jest teraz. Oba `beforeId` wstawiaja warstwy pod wynik.
+      applyAnalysingChunk(instance, analysingChunkRef.current)
+      applyAnalysedChunks(instance, analysedChunksRef.current)
 
       // Handlery kursora zostaja przy mapie, nie przy stylu, wiec rejestrujemy je tylko raz —
       // po drugim `style.load` mielibysmy inaczej dwa zestawy tych samych nasluchow.
@@ -377,6 +473,23 @@ export function MapView({
     if (!instance || !styleReady.current) return
     applySuspectedRoofs(instance, suspectedRoofs)
   }, [suspectedRoofs])
+
+  /**
+   * Postep analizy, dwa propsy i dwa efekty. Oba stoja PO efekcie wyniku modelu, zeby przy
+   * jednoczesnej zmianie obu propsow (a tak wlasnie przychodzi kazdy kawalek) warstwa modelu
+   * istniala juz wtedy, gdy `beforeId` szuka, pod co sie wstawic.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady.current) return
+    applyAnalysingChunk(instance, analysingChunk)
+  }, [analysingChunk])
+
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady.current) return
+    applyAnalysedChunks(instance, analysedChunks)
+  }, [analysedChunks])
 
   return <div ref={container} data-testid="map" className="h-full w-full" />
 }

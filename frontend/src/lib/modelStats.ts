@@ -89,6 +89,72 @@ export function effectiveThreshold(analysis: AreaAnalysis, chosen: number | null
   return recountStats(analysis, chosen ?? analysis.stats.threshold).threshold
 }
 
+/**
+ * Jeden koszyk histogramu ocen: przedzial polotwarty `[from, to)` i liczba dachow w nim.
+ *
+ * Ostatni koszyk jest domkniety z prawej (`[0,95; 1]`), bo ocena 1 jest ocena i musi byc gdzies
+ * policzona — inaczej suma slupkow nie rownalaby sie liczbie ocenionych dachow.
+ */
+export type ScoreBucket = {
+  from: number
+  to: number
+  count: number
+}
+
+/**
+ * Dwadziescia koszykow po 0,05.
+ *
+ * Szerokosc koszyka jest rowna krokowi suwaka (`STEP` w `ThresholdSlider`) i to nie jest zbieg
+ * okolicznosci: przy tej samej siatce prog wybrany suwakiem zawsze wypada na granicy koszyka,
+ * wiec przemalowanie slupkow dzieli je dokladnie na progu, a nie w poprzek ktoregos slupka.
+ */
+export const SCORE_BUCKET_COUNT = 20
+
+/**
+ * Rozklad ocen modelu: ile dachow trafilo w kazdy koszyk.
+ *
+ * Czysta funkcja nad samymi ocenami, bo cala trudnosc jest w jednej decyzji: gdzie nalezy ocena
+ * stojaca dokladnie na granicy koszyka. Granica nalezy do koszyka, ktory sie od niej ZACZYNA
+ * (`[from, to)`), wiec 0,05 jest w koszyku 0,05-0,10, a nie w 0-0,05. Dzieki temu kazda ocena
+ * wchodzi do dokladnie jednego koszyka i suma slupkow rowna sie `stats.analysed`.
+ *
+ * Porownania sa zwykle, bez tolerancji, i to jest bezpieczne, bo granice przechodza przez
+ * `roundTo(..., 6)`: 3/20 jest wtedy tym samym doublem co `0.15` wczytane z odpowiedzi modelu.
+ * Bez tego zaokraglenia granica wypadalaby na 0,15000000000000002 i ocena „0,15" ladowalaby
+ * o koszyk nizej, czyli ponizej swojej wlasnej granicy.
+ *
+ * Do histogramu ida tylko dachy OCENIONE — `analysis.buildings` innych nie zawiera. Dach bez
+ * oceny nie jest tu zerem, nie ma go w zadnym koszyku, i podpis pod wykresem mowi to wprost.
+ */
+export function scoreHistogram(scores: number[], bucketCount: number = SCORE_BUCKET_COUNT): ScoreBucket[] {
+  const width = 1 / bucketCount
+  const buckets: ScoreBucket[] = Array.from({ length: bucketCount }, (_, index) => ({
+    from: roundTo(index * width, 6),
+    to: roundTo((index + 1) * width, 6),
+    count: 0,
+  }))
+
+  for (const score of scores) {
+    buckets[bucketIndex(buckets, score)].count += 1
+  }
+
+  return buckets
+}
+
+/**
+ * Koszyk dla jednej oceny: `>=` na dolnej granicy i `<` na gornej, czyli ta sama regula, ktora
+ * w `recountStats` decyduje o podejrzeniu — ocena rowna granicy nalezy do przedzialu powyzej.
+ *
+ * Oceny 1 nie lapie zaden przedzial polotwarty, wiec domyka ja ostatni koszyk. Ocena spoza 0-1
+ * nie ma prawa przyjsc z modelu, ale gdyby przyszla, wpada do skrajnego koszyka zamiast wypasc
+ * z sumy: slupki maja sie sumowac do liczby ocen, zawsze.
+ */
+function bucketIndex(buckets: ScoreBucket[], score: number): number {
+  const index = buckets.findIndex((bucket) => score >= bucket.from && score < bucket.to)
+  if (index !== -1) return index
+  return score < buckets[0].from ? 0 : buckets.length - 1
+}
+
 /** Zaokraglenie do zadanej liczby cyfr po kropce — tyle samo, ile zaokragla backend. */
 function roundTo(value: number, digits: number): number {
   const scale = 10 ** digits

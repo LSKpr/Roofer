@@ -769,6 +769,78 @@ it('przy przycietej liscie nie daje suwaka i mowi, dlaczego', () => {
   expect(screen.getByText('16 (25%)')).toBeDefined()
 })
 
+/** Liczby z koszykow rozkladu ocen: jedna komorka na kazdy przedzial, takze na pusty. */
+function bucketCounts(): number[] {
+  return screen.getAllByTestId('score-bucket').map((cell) => Number(cell.dataset.count))
+}
+
+/**
+ * Slupki, ktore prog przemalowal na kolor podejrzenia. Pytamy w obrebie jednego wyniku `render`,
+ * bo ten test rysuje panel dwa razy — przy dwoch progach — i oba zostaja w dokumencie.
+ */
+function suspectedBarsIn(container: HTMLElement): HTMLElement[] {
+  const bars = Array.from(container.querySelectorAll<HTMLElement>('[data-testid="score-bar"]'))
+  return bars.filter((bar) => bar.className.includes('bg-suspected'))
+}
+
+// Suwak bez rozkladu jest galka bez kontekstu: „50%" nie mowi, czy odcina dwa dachy, czy dwiescie.
+// Suma slupkow musi byc liczba ocenionych dachow, inaczej wykres opisuje inny obszar niz tabelka.
+it('pokazuje rozklad ocen pod suwakiem i sumuje slupki do liczby ocenionych dachow', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  expect(screen.getByTestId('score-histogram')).toBeDefined()
+  expect(bucketCounts().reduce((sum, count) => sum + count, 0)).toBe(MODEL_STATS.analysed)
+  // Najwyzszy koszyk to czterdziesci siedem dachow z ocena 0,18 — os pionowa ma jednostke.
+  expect(screen.getByText('Tallest bar 47 roofs')).toBeDefined()
+})
+
+// Sedno tego wykresu: przy ruchu suwaka widac, co prog zabiera i co dodaje.
+it('przemalowuje slupki rozkladu, gdy prog sie zmienia', () => {
+  // Ponad 0,5 stoja koszyki z ocenami 0,66, 0,72 i 0,81; ponizej te z 0,18 i 0,31.
+  const atDefault = renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.5 })
+  expect(suspectedBarsIn(atDefault.container)).toHaveLength(3)
+
+  // Prog 0,7 zabiera koszyk 0,65-0,70, w ktorym siedzi ocena 0,66.
+  const higher = renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.7 })
+  expect(suspectedBarsIn(higher.container)).toHaveLength(2)
+
+  // Liczba slupkow sie nie zmienia — zmienia sie tylko to, ktore sa pomaranczowe.
+  expect(higher.container.querySelectorAll('[data-testid="score-bar"]')).toHaveLength(5)
+})
+
+// Dachy bez oceny nie sa na tym wykresie zerem, nie ma ich wcale — bez tego zdania rozklad
+// czytaloby sie jako rozklad calego obszaru.
+it('mowi pod rozkladem, ze widac w nim tylko dachy ocenione', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  expect(screen.getByText(/Scored roofs only/)).toBeDefined()
+  expect(screen.getByText(/no score is not the same as a score of zero/)).toBeDefined()
+})
+
+// Wynik bez ani jednej oceny to nie rozklad rowny zeru, wiec pustej ramki nie rysujemy.
+it('nie rysuje rozkladu, gdy zaden dach nie dostal oceny', () => {
+  const nothingScored = anAnalysis({
+    stats: { analysed: 0, noResult: 12, suspected: 0, suspectedShare: 0, suspectedNotListed: 0, suspectedListed: 0, listedNotSuspected: 0, suspectedRoofAreaM2: 0 },
+    buildings: [],
+  })
+
+  renderPanel(aSmallScan(), { analysis: nothingScored })
+
+  expect(screen.queryByTestId('score-histogram')).toBeNull()
+  expect(screen.queryByText(/Scored roofs only/)).toBeNull()
+  // Sam suwak zostaje: prog jest nadal decyzja patrzacego, tylko nie ma czego nim ciac.
+  expect(thresholdSlider()).toBeDefined()
+})
+
+// Wykres jest ilustracja: kontrolka progu zostaje jedna i ma etykiete dla czytnika ekranu.
+it('nie dodaje razem z rozkladem drugiej kontrolki progu', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  expect(screen.getAllByRole('slider')).toHaveLength(1)
+  expect(thresholdSlider().type).toBe('range')
+  expect(screen.getByTestId('score-histogram').getAttribute('aria-hidden')).toBe('true')
+})
+
 // Piecset dachow idzie ponad minute. Bez tej informacji panel wyglada na zawieszony, a uzytkownik
 // przerywa i probuje jeszcze raz — czyli placi za to samo dwa razy.
 it('szacuje czas oczekiwania z liczby dachow', () => {

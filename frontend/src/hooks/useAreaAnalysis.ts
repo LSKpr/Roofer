@@ -4,6 +4,7 @@ import {
   fetchAreaPlan,
   type AreaAnalysis,
   type AreaPlan,
+  type AreaPlanChunk,
   type Bounds,
   type SuspectedRoof,
 } from '../api/client'
@@ -18,6 +19,20 @@ import { recountStats } from '../lib/modelStats'
  */
 export type AreaAnalysisProgress = { done: number; total: number; buildings: number }
 
+/**
+ * Pusta lista kawalkow, wspolna dla wszystkich stanow bez postepu.
+ *
+ * Jedna stala, a nie `[]` w kazdym miejscu: ta tablica jest propsem mapy, a nowa tozsamosc przy
+ * kazdym renderze kazalaby `MapView` przeliczac zrodlo GeoJSON bez powodu. Nikt jej nie mutuje —
+ * kazda zmiana postepu buduje nowa tablice.
+ */
+const NO_CHUNKS: Bounds[] = []
+
+/** Kawalek planu w prostokat dla mapy: liczba budynkow jest postepem, a nie geometria. */
+function chunkBounds(chunk: AreaPlanChunk): Bounds {
+  return { sw: chunk.sw, ne: chunk.ne }
+}
+
 export type AreaAnalysisState = {
   /** Wynik scalony z kawalkow, ktore juz splynely — widoczny takze w trakcie pracy. */
   analysis: AreaAnalysis | null
@@ -25,6 +40,23 @@ export type AreaAnalysisState = {
   error: string | null
   /** `null`, dopoki nie ma planu (czyli przed pierwsza odpowiedzia) albo po `clear`. */
   progress: AreaAnalysisProgress | null
+  /**
+   * Kawalek, ktory model liczy w tej chwili — po to, zeby mapa mogla pokazac, gdzie model patrzy.
+   *
+   * `null` znaczy „nic nie leci": przed planem, po ostatnim kawalku, po bledzie i po `clear`.
+   * Przy planie z jednym kawalkiem zostaje `null` na cala analize: jeden kawalek jest rowny
+   * zaznaczeniu, wiec byla by to druga ramka dokladnie na prostokacie, ktory mapa juz rysuje.
+   */
+  analysingChunk: Bounds | null
+  /**
+   * Kawalki, ktore model juz policzyl, w kolejnosci z planu — z nich powstaje efekt przemiatania
+   * zaznaczenia. Pusta lista znaczy „nie ma czego pokazywac": tak samo jak przy `analysingChunk`
+   * przed planem, po calej analizie, po `clear` i przy planie z jednym kawalkiem.
+   *
+   * Po BLEDZIE kawalka lista zostaje niepusta, i to jest cala jej wartosc w tym momencie:
+   * pokazuje, ile obszaru model obejrzal, zanim przestal odpowiadac.
+   */
+  analysedChunks: Bounds[]
   /**
    * Plan oddal `truncated`: fragment zaznaczenia byl za gesty na podzial i nie ma swojego kawalka,
    * wiec model nigdy na niego nie spojrzy. Panel musi to powiedziec — brak flag w tym miejscu
@@ -45,6 +77,8 @@ type Job = {
   skipped: boolean
   /** Petla po kawalkach nadal chodzi. Nie da sie tego wyliczyc z wyniku, bo wynik jest czesciowy. */
   running: boolean
+  analysingChunk: Bounds | null
+  analysedChunks: Bounds[]
 }
 
 /** Zmiana stanu zlecenia: tylko te pola, ktore naprawde sie zmienily. */
@@ -121,6 +155,9 @@ function messageFrom(error: unknown): string {
  * zwarta (zachod przed wschodem, poludnie przed polnoca), wiec sasiadujace prostokaty trafiaja
  * w cache kafli uslugi — przetasowanie ich albo wyslanie rownolegle kosztowaloby kafle drugi raz,
  * a tamta usluga i tak liczy jedno zadanie naraz.
+ *
+ * Prostokaty kawalkow ida osobno do stanu (`analysingChunk`, `analysedChunks`), bo sam licznik
+ * „3 z 7" nie mowi, KTOREGO fragmentu dotyczy — a to jest jedyna rzecz, ktora na mapie widac.
  */
 async function streamChunks(bounds: Bounds, alive: () => boolean, publish: (patch: Patch) => void): Promise<void> {
   let plan: AreaPlan
@@ -135,12 +172,23 @@ async function streamChunks(bounds: Bounds, alive: () => boolean, publish: (patc
   const chunks = plan.chunks
   publish({ progress: { done: 0, total: chunks.length, buildings: 0 }, skipped: plan.truncated })
 
+  /*
+   * Podzial pokazujemy tylko wtedy, gdy naprawde jest podzialem. Jeden kawalek jest rowny calemu
+   * zaznaczeniu, wiec jego ramka lezalaby dokladnie na prostokacie zeskanowanego obszaru, ktory
+   * mapa juz rysuje — druga ramka na tym samym miejscu to szum, nie informacja.
+   */
+  const split = chunks.length > 1
+
   const parts: AreaAnalysis[] = []
+  const analysed: Bounds[] = []
   for (const chunk of chunks) {
     // Sprawdzenie przed KAZDYM kawalkiem, nie tylko przed pierwszym: `clear` i nowe `run` musza
     // przerwac petle, a nie schowac wynik. Inaczej zamkniety panel zostawia w tle kilka minut
     // zapytan do modelu, ktorych nikt juz nie zobaczy.
     if (!alive()) return
+    // Kawalek wchodzi do stanu PRZED zapytaniem: to jedyny moment, w ktorym mapa moze powiedziec,
+    // gdzie model patrzy teraz — odpowiedz przyjdzie kilkanascie sekund pozniej.
+    if (split) publish({ analysingChunk: chunkBounds(chunk) })
     try {
       parts.push(await fetchAreaAnalysis(chunk))
     } catch (error: unknown) {
@@ -149,18 +197,28 @@ async function streamChunks(bounds: Bounds, alive: () => boolean, publish: (patc
        * pokazujemy `detail` z backendu i przestajemy pytac dalej. Kilka minut inferencji do kosza
        * z powodu jednego 503 to najgorsze mozliwe zachowanie, a kolejne kawalki najpewniej
        * dostana ten sam blad.
+       *
+       * Policzone kawalki zostaja na mapie, gasnie sam kawalek, ktory nie wrocil: po bledzie to
+       * wlasnie one mowia, ile obszaru model obejrzal, zanim przestal odpowiadac.
        */
-      publish({ error: messageFrom(error), running: false })
+      publish({ error: messageFrom(error), running: false, analysingChunk: null })
       return
     }
     if (!alive()) return
+    analysed.push(chunkBounds(chunk))
     const merged = mergeAnalyses(parts)
     publish({
       analysis: merged,
       progress: { done: parts.length, total: chunks.length, buildings: merged?.stats.analysed ?? 0 },
+      // Nowa tablica, nie ta sama z dopisanym elementem: `MapView` porownuje props przez tozsamosc.
+      analysedChunks: split ? [...analysed] : NO_CHUNKS,
     })
   }
-  publish({ running: false })
+  /*
+   * Caly obszar policzony: nie ma „aktualnego" kawalka, a policzone przestaja byc informacja —
+   * skoro wrocily wszystkie, „ktore juz policzono" znaczy „cale zaznaczenie". Zostaje sam wynik.
+   */
+  publish({ running: false, analysingChunk: null, analysedChunks: NO_CHUNKS })
 }
 
 /**
@@ -170,6 +228,10 @@ async function streamChunks(bounds: Bounds, alive: () => boolean, publish: (patc
  * model liczy 40–115 ms na dach, wiec przy kilkuset dachach jedna odpowiedz na koniec kazalaby
  * patrzec minutami na pusty panel. Podzial robi backend (`/api/area/plan`), bo tylko on zna
  * limity uslugi i liczby budynkow.
+ *
+ * Razem z wynikiem hook wystawia geometrie podzialu: `analysingChunk` (fragment u modelu teraz)
+ * i `analysedChunks` (fragmenty, ktore wrocily). Postep liczbowy mowi „3 z 7", ale nie mowi,
+ * gdzie te trzy sa — a minuta pracy bez tego wyglada na zawieszona.
  *
  * Numer zlecenia siedzi w `useRef` i jest sprawdzany przed kazdym kawalkiem — po to, zeby
  * porzucone zlecenie naprawde przestalo pytac model, a nie tylko schowalo wynik. Wyscig jest tu
@@ -184,7 +246,16 @@ export function useAreaAnalysis(): AreaAnalysisState {
   const run = useCallback((bounds: Bounds) => {
     const id = latest.current + 1
     latest.current = id
-    setJob({ request: id, analysis: null, error: null, progress: null, skipped: false, running: true })
+    setJob({
+      request: id,
+      analysis: null,
+      error: null,
+      progress: null,
+      skipped: false,
+      running: true,
+      analysingChunk: null,
+      analysedChunks: NO_CHUNKS,
+    })
     // Podwojny straznik: `alive` wstrzymuje dalsze zapytania, a warunek w aktualizatorze pilnuje,
     // zeby spozniona odpowiedz nie dopisala sie do stanu nowszego zlecenia.
     const alive = () => latest.current === id
@@ -206,6 +277,8 @@ export function useAreaAnalysis(): AreaAnalysisState {
     error: job?.error ?? null,
     progress: job?.progress ?? null,
     skipped: job?.skipped ?? false,
+    analysingChunk: job?.analysingChunk ?? null,
+    analysedChunks: job?.analysedChunks ?? NO_CHUNKS,
     run,
     clear,
   }

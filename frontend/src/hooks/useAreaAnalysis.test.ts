@@ -383,6 +383,151 @@ it('konczy bez wyniku, gdy plan nie oddal ani jednego kawalka', async () => {
   expect(backend.analysed()).toHaveLength(0)
 })
 
+/** Prostokat kawalka bez licznika budynkow — dokladnie to, co mapa dostaje jako `Bounds`. */
+function chunkArea(index: number, plan: AreaPlan = aPlan()): Bounds {
+  const chunk = plan.chunks[index]
+  return { sw: chunk.sw, ne: chunk.ne }
+}
+
+// Sedno tej zmiany po stronie hooka: mapa musi wiedziec, GDZIE model patrzy teraz — sam licznik
+// „1 z 2" tego nie mowi. Przed planem nie ma jeszcze zadnego kawalka, wiec nie ma czego rysowac.
+it('wystawia kawalek liczony teraz dopiero po planie', async () => {
+  const backend = queuedFetch()
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  expect(result.current.analysingChunk).toBeNull()
+  expect(result.current.analysedChunks).toEqual([])
+
+  await backend.answer(0, aPlan())
+
+  expect(result.current.analysingChunk).toEqual(chunkArea(0))
+  // Nic jeszcze nie wrocilo, wiec policzonych nie ma.
+  expect(result.current.analysedChunks).toEqual([])
+})
+
+// Mapa nie ma po co znac liczby budynkow w kawalku: to jest postep w panelu, nie geometria.
+it('oddaje sam prostokat kawalka, bez licznika budynkow', async () => {
+  const backend = queuedFetch()
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, aPlan())
+
+  expect(result.current.analysingChunk).not.toHaveProperty('buildings')
+  expect(Object.keys(result.current.analysingChunk ?? {}).sort()).toEqual(['ne', 'sw'])
+})
+
+it('przesuwa aktualny kawalek na nastepny i dopisuje policzony', async () => {
+  const backend = queuedFetch()
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, aPlan())
+  await backend.answer(1, aChunkResult([aRoof({ id: 1 })], 0))
+
+  expect(result.current.analysingChunk).toEqual(chunkArea(1))
+  expect(result.current.analysedChunks).toEqual([chunkArea(0)])
+})
+
+// Po ostatnim kawalku nie ma „aktualnego", a „policzone" znaczyloby cale zaznaczenie — czyli nic
+// nie wnosi. Zostaje sam wynik: pomaranczowe obrysy i prostokat obszaru.
+it('czysci oba prostokaty po ostatnim kawalku', async () => {
+  const backend = queuedFetch()
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, aPlan())
+  await backend.answer(1, aChunkResult([aRoof({ id: 1 })], 0))
+  await backend.answer(2, aChunkResult([aRoof({ id: 2 })], 0))
+
+  expect(result.current.loading).toBe(false)
+  expect(result.current.analysingChunk).toBeNull()
+  expect(result.current.analysedChunks).toEqual([])
+  // Wynik zostaje — znika sam postep.
+  expect(result.current.analysis?.buildings.map((roof) => roof.id)).toEqual([1, 2])
+})
+
+// Policzone rosna kawalek po kawalku i wlasnie to robi efekt przemiatania obszaru.
+it('policzone kawalki rosna po jednym, w kolejnosci z planu', async () => {
+  const backend = queuedFetch()
+  /** Trzeci kawalek dalej na wschod, zeby lista policzonych rosla w kolejnosci z planu. */
+  const third = { sw: { lng: 21.5865, lat: 51.3555 }, ne: { lng: 21.5925, lat: 51.3629 }, buildings: 88 }
+  const plan = aPlan({ chunks: [...aPlan().chunks, third] })
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, plan)
+  expect(result.current.analysedChunks).toEqual([])
+
+  await backend.answer(1, aChunkResult([aRoof({ id: 1 })], 0))
+  expect(result.current.analysedChunks).toEqual([chunkArea(0, plan)])
+
+  await backend.answer(2, aChunkResult([aRoof({ id: 2 })], 0))
+  expect(result.current.analysedChunks).toEqual([chunkArea(0, plan), chunkArea(1, plan)])
+  expect(result.current.analysingChunk).toEqual(chunkArea(2, plan))
+
+  await backend.answer(3, aChunkResult([aRoof({ id: 3 })], 0))
+  expect(result.current.analysedChunks).toEqual([])
+  expect(result.current.analysingChunk).toBeNull()
+})
+
+// Jeden kawalek jest rowny calemu zaznaczeniu, wiec jego ramka lezalaby dokladnie na prostokacie
+// zeskanowanego obszaru, ktory mapa juz rysuje. Druga ramka na tym samym miejscu to szum.
+it('nie wystawia nic do rysowania, gdy plan ma jeden kawalek', async () => {
+  const backend = queuedFetch()
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, aPlan({ chunks: [aPlan().chunks[0]] }))
+
+  expect(result.current.analysingChunk).toBeNull()
+  expect(result.current.analysedChunks).toEqual([])
+
+  await backend.answer(1, aChunkResult([aRoof({ id: 1 })], 0))
+
+  expect(result.current.analysingChunk).toBeNull()
+  expect(result.current.analysedChunks).toEqual([])
+  // Wynik oczywiscie jest: nie rysujemy postepu, a nie rezygnujemy z analizy.
+  expect(result.current.analysis?.buildings.map((roof) => roof.id)).toEqual([1])
+})
+
+// Przy bledzie policzone zostaja widoczne: wtedy wlasnie pokazuja, ile obszaru model obejrzal,
+// zanim przestal odpowiadac. Gasnie sam kawalek, ktory nie wrocil.
+it('po bledzie kawalka zostawia policzone, a aktualny gasi', async () => {
+  const backend = queuedFetch()
+  const plan = aPlan({ chunks: [...aPlan().chunks, { ...aPlan().chunks[0], buildings: 88 }] })
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, plan)
+  await backend.answer(1, aChunkResult([aRoof({ id: 1 })], 0))
+  await backend.reject(2, 503, 'The model is not responding.')
+
+  expect(result.current.error).toBe('The model is not responding.')
+  expect(result.current.analysedChunks).toEqual([chunkArea(0, plan)])
+  expect(result.current.analysingChunk).toBeNull()
+})
+
+it('clear i nowe run zdejmuja oba prostokaty', async () => {
+  const backend = queuedFetch()
+  const { result } = renderHook(() => useAreaAnalysis())
+
+  act(() => result.current.run(BOUNDS))
+  await backend.answer(0, aPlan())
+  await backend.answer(1, aChunkResult([aRoof({ id: 1 })], 0))
+  expect(result.current.analysedChunks).toHaveLength(1)
+
+  act(() => result.current.clear())
+  expect(result.current.analysingChunk).toBeNull()
+  expect(result.current.analysedChunks).toEqual([])
+
+  // Nowe zaznaczenie startuje bez postepu poprzedniego, jeszcze przed odpowiedzia planu.
+  act(() => result.current.run(OTHER_BOUNDS))
+  expect(result.current.analysingChunk).toBeNull()
+  expect(result.current.analysedChunks).toEqual([])
+})
+
 // Scalanie jest zwykla funkcja, wiec arytmetyke sprawdzamy bez hooka i bez sieci.
 it('mergeAnalyses bez kawalkow nie wymysla wyniku', () => {
   expect(mergeAnalyses([])).toBeNull()

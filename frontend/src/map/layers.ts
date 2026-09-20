@@ -323,7 +323,8 @@ export const MAP_LAYERS: LayerSpecification[] = [
  * wiec klik w cieplo wyslalby do `/api/buildings/{id}` liczbe, ktora nic nie znaczy — albo nie
  * wyslalby nic i kasowal wybor. Warstwy podswietlenia tez nie sa klikalne: klik ma trafiac
  * w budynek pod spodem. Prostokat zeskanowanego obszaru tym bardziej: przykrywa cale zaznaczenie,
- * wiec kazdy klik w mape trafialby w niego zamiast w budynek.
+ * wiec kazdy klik w mape trafialby w niego zamiast w budynek. To samo dotyczy kawalkow analizy
+ * (`CHUNK_LAYER_IDS`): pokrywaja fragmenty zaznaczenia i nie maja o co zapytac backendu.
  */
 export const CLICKABLE_LAYER_IDS: string[] = [LAYER_IDS.fill]
 export const HIGHLIGHT_LAYER_IDS: string[] = [LAYER_IDS.selectedFill, LAYER_IDS.selectedOutline]
@@ -473,3 +474,104 @@ export function suspectedRoofsCollection(roofs: SuspectedRoof[]): SuspectedRoofC
     })),
   }
 }
+
+/**
+ * Postep analizy obszaru na mapie: kawalek, ktory model liczy w tej chwili, i kawalki, ktore juz
+ * wrocily. Praca trwa minute i idzie kawalek po kawalku, wiec bez tych dwoch warstw widac tylko
+ * pomaranczowe obrysy pojawiajace sie partiami — czyli przez wieksza czesc czasu nic.
+ *
+ * Dwa osobne zrodla, a nie jedno z atrybutem stanu: aktualny kawalek to zawsze jeden prostokat
+ * podmieniany w miejscu, a policzone to rosnaca lista. Jedno zrodlo kazaloby przy kazdym kawalku
+ * przepisywac cala kolekcje, zeby zmienic stan jednego obiektu, i wiazaloby zycie obu warstw
+ * (aktualny znika po ostatnim kawalku, policzone zostaja po bledzie).
+ *
+ * Identyfikatory sa rozlaczne z `LAYER_IDS`, `DRAW_LAYER_IDS`, `SCAN_AREA_LAYER_IDS`
+ * i `SUSPECTED_LAYER_IDS`: wszystkie te rodziny potrafia stac na jednej mapie naraz.
+ */
+export const CHUNK_CURRENT_SOURCE_ID = 'roofer-chunk-current'
+export const CHUNK_DONE_SOURCE_ID = 'roofer-chunk-done'
+
+export const CHUNK_LAYER_IDS = {
+  doneFill: 'roofer-chunk-done-fill',
+  currentFill: 'roofer-chunk-current-fill',
+  currentOutline: 'roofer-chunk-current-outline',
+}
+
+/**
+ * Policzony kawalek dostaje samo wypelnienie, i to bardzo lekkie. Cala jego tresc to „tu model
+ * juz byl", wiec wystarcza mu jedna warstwa wiecej niz ma sasiad jeszcze nieprzeliczony:
+ * pod nim lezy wypelnienie zeskanowanego obszaru (0,06), wiec policzony fragment ma w sumie
+ * ok. 0,14 wobec 0,06 fragmentu, ktory czeka — i wlasnie ta roznica „wypelnia" zaznaczenie
+ * od zachodu na wschod. Obrysu nie ma: siatka ramek w srodku zaznaczenia to szum, a nie postep.
+ */
+export const CHUNK_DONE_FILL_OPACITY = 0.08
+
+/**
+ * Kawalek liczony w tej chwili jest mocniejszy od policzonych, ale nadal przezroczysty: pod nim
+ * leza dachy, ktore model wlasnie oglada, i uzytkownik ma je widziec razem z ramka.
+ */
+export const CHUNK_CURRENT_FILL_OPACITY = 0.16
+
+/**
+ * Grubosc ramki aktualnego kawalka: wyrazniej niz obrys zeskanowanego obszaru (1,75 px), ale
+ * slabiej niz obrys modelu (2,75 px). Postep jest informacja tymczasowa, a wynik zostaje.
+ */
+export const CHUNK_CURRENT_LINE_WIDTH = 2.25
+
+/**
+ * Linia przerywana, jak w podgladzie rysowania: znaczy „to sie dzieje teraz". Obrys zeskanowanego
+ * obszaru jest ciagly, wiec dwie ramki w tym samym kolorze nadal daja sie odroznic.
+ */
+export const CHUNK_CURRENT_DASHARRAY: number[] = [2, 2]
+
+export const chunkDoneFillLayer: FillLayerSpecification = {
+  id: CHUNK_LAYER_IDS.doneFill,
+  type: 'fill',
+  source: CHUNK_DONE_SOURCE_ID,
+  paint: {
+    'fill-color': SELECTED_COLOR,
+    'fill-opacity': CHUNK_DONE_FILL_OPACITY,
+  },
+}
+
+export const chunkCurrentFillLayer: FillLayerSpecification = {
+  id: CHUNK_LAYER_IDS.currentFill,
+  type: 'fill',
+  source: CHUNK_CURRENT_SOURCE_ID,
+  paint: {
+    'fill-color': SELECTED_COLOR,
+    'fill-opacity': CHUNK_CURRENT_FILL_OPACITY,
+  },
+}
+
+export const chunkCurrentOutlineLayer: LineLayerSpecification = {
+  id: CHUNK_LAYER_IDS.currentOutline,
+  type: 'line',
+  source: CHUNK_CURRENT_SOURCE_ID,
+  paint: {
+    'line-color': SELECTED_COLOR,
+    'line-width': CHUNK_CURRENT_LINE_WIDTH,
+    'line-dasharray': CHUNK_CURRENT_DASHARRAY,
+  },
+}
+
+/** Kolejnosc dodawania: wypelnienie pod obrysem, tak jak w pozostalych rodzinach. */
+export const CHUNK_CURRENT_LAYERS: LayerSpecification[] = [chunkCurrentFillLayer, chunkCurrentOutlineLayer]
+
+/** Jedna warstwa, ale lista jak przy pozostalych rodzinach: dokladanie i sprzatanie ma jeden ksztalt. */
+export const CHUNK_DONE_LAYERS: LayerSpecification[] = [chunkDoneFillLayer]
+
+/**
+ * Warstwy, ktore musza zostac NAD aktualnym kawalkiem, w kolejnosci od najnizszej. `beforeId`
+ * bierze pierwsza, ktora naprawde stoi na mapie — czyli postep wchodzi pod wynik modelu i pod
+ * podswietlenie wybranego budynku. Pomaranczowe obrysy i klikniety budynek zostaja najmocniejsze
+ * na ekranie; postep jest tylko informacja o tym, gdzie model patrzy.
+ */
+export const ABOVE_CHUNK_CURRENT_LAYER_IDS: string[] = [SUSPECTED_LAYER_IDS.outline, ...HIGHLIGHT_LAYER_IDS]
+
+/** Policzone wchodza jeszcze nizej — pod aktualny kawalek, zeby jego ramka zostala czytelna. */
+export const ABOVE_CHUNK_DONE_LAYER_IDS: string[] = [
+  CHUNK_LAYER_IDS.currentFill,
+  CHUNK_LAYER_IDS.currentOutline,
+  ...ABOVE_CHUNK_CURRENT_LAYER_IDS,
+]

@@ -24,6 +24,15 @@ function roofsLabel(roofs: StubRoof[] | null | undefined): string {
   return roofs.map((roof) => roof.id).join(',')
 }
 
+/**
+ * Kawalki postepu analizy w jednej linii, tym samym zapisem co obszar. Pusta lista jest „brak":
+ * dla mapy znaczy dokladnie tyle samo, ile `null` — nie ma czego rysowac.
+ */
+function chunksLabel(chunks: StubBounds[] | null | undefined): string {
+  if (!chunks || chunks.length === 0) return 'brak'
+  return chunks.map(areaLabel).join(' ')
+}
+
 vi.mock('./map/MapView', () => ({
   MapView: ({
     onSelect,
@@ -34,6 +43,8 @@ vi.mock('./map/MapView', () => ({
     scannedArea,
     showRegistry,
     suspectedRoofs,
+    analysingChunk,
+    analysedChunks,
   }: {
     onSelect?: (id: number | null) => void
     onZoomChange?: (zoom: number) => void
@@ -43,6 +54,8 @@ vi.mock('./map/MapView', () => ({
     scannedArea?: StubBounds | null
     showRegistry?: boolean
     suspectedRoofs?: StubRoof[] | null
+    analysingChunk?: StubBounds | null
+    analysedChunks?: StubBounds[] | null
   }) => (
     <div>
       {/* Propsy sterujace mapa wystawiamy jako tekst, zeby dalo sie je sprawdzic bez MapLibre. */}
@@ -50,6 +63,8 @@ vi.mock('./map/MapView', () => ({
       <span data-testid="map-drawing">{drawing ? 'rysuje' : 'nie rysuje'}</span>
       <span data-testid="map-scanned-area">{areaLabel(scannedArea)}</span>
       <span data-testid="map-suspected-roofs">{roofsLabel(suspectedRoofs)}</span>
+      <span data-testid="map-analysing-chunk">{areaLabel(analysingChunk)}</span>
+      <span data-testid="map-analysed-chunks">{chunksLabel(analysedChunks)}</span>
       {/* Tekst, a nie booleana: `undefined` ma byc widoczny jako blad, a nie jako „wylaczone". */}
       <span data-testid="map-show-registry">{String(showRegistry)}</span>
       <button type="button" onClick={() => onSelect?.(42)}>
@@ -456,15 +471,17 @@ const SECOND_CHUNK = {
  * czeka, dopoki test go nie odpowie. Bez tego nie da sie sprawdzic, co jest na ekranie POMIEDZY
  * kawalkami — a wlasnie to jest cala rzecz, ktora tu dodajemy.
  */
+type StubResponse = { status: number; json: () => Promise<unknown> }
+
 function stubStreamingApi(plan: unknown) {
-  const queue: ((body: unknown) => void)[] = []
+  const queue: ((response: StubResponse) => void)[] = []
   const fetchStub = vi.fn((url: string) => {
     if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => LIMITS })
     if (url.includes('/api/area/scan')) return Promise.resolve({ status: 200, json: async () => SCAN })
     if (url.includes('/api/area/plan')) return Promise.resolve({ status: 200, json: async () => plan })
     if (url.includes('/api/area/analyze')) {
       return new Promise((resolve) => {
-        queue.push((body: unknown) => resolve({ status: 200, json: async () => body }))
+        queue.push(resolve)
       })
     }
     if (url.includes('/api/buildings/')) return Promise.resolve({ status: 200, json: async () => BUILDING })
@@ -474,7 +491,11 @@ function stubStreamingApi(plan: unknown) {
   return {
     chunksAsked: () => queue.length,
     async answer(index: number, body: unknown) {
-      await act(async () => queue[index](body))
+      await act(async () => queue[index]({ status: 200, json: async () => body }))
+    },
+    /** Kawalek, ktory padl. `detail` z backendu jest gotowym tekstem dla uzytkownika. */
+    async reject(index: number, status: number, detail: string) {
+      await act(async () => queue[index]({ status, json: async () => ({ detail }) }))
     },
   }
 }
@@ -510,6 +531,105 @@ it('draws the roofs from the first chunk before the second one arrives', async (
   expect(screen.queryByText(/These numbers cover/)).toBeNull()
   expect(screen.getByText('Roofs analysed')).toBeDefined()
   expect(screen.getByTestId('suspected-not-listed').textContent).toBe('1')
+})
+
+/** Prostokaty kawalkow z planu, tym samym zapisem, ktorym zaslepka mapy opisuje obszar. */
+const FIRST_CHUNK_LABEL = areaLabel(TWO_CHUNK_PLAN.chunks[0])
+const SECOND_CHUNK_LABEL = areaLabel(TWO_CHUNK_PLAN.chunks[1])
+
+/**
+ * Drugi powod, dla ktorego postep musi trafic na mape: licznik „1 z 2" w panelu nie mowi, KTOREGO
+ * fragmentu dotyczy. Mapa dostaje prostokat liczony teraz i liste policzonych, a po zakonczeniu
+ * traci oba — zostaje sam wynik.
+ */
+it('tells the map which chunk the model is working on and which are already done', async () => {
+  const backend = stubStreamingApi(TWO_CHUNK_PLAN)
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe('brak')
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+
+  // Plan wrocil, pierwszy kawalek jest u modelu: na mapie jest jego ramka i nic policzonego.
+  await waitFor(() => expect(backend.chunksAsked()).toBe(1))
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe(FIRST_CHUNK_LABEL)
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe('brak')
+
+  await backend.answer(0, FIRST_CHUNK)
+
+  // Ramka przeskoczyla na drugi kawalek, pierwszy zostal jako policzony.
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe(SECOND_CHUNK_LABEL)
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe(FIRST_CHUNK_LABEL)
+
+  await backend.answer(1, SECOND_CHUNK)
+
+  // Wszystko policzone: postep znika, na mapie zostaja obrysy modelu.
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe('brak')
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe('brak')
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
+})
+
+// Jeden kawalek jest rowny zaznaczeniu, wiec jego ramka lezalaby na prostokacie obszaru, ktory
+// mapa juz rysuje — druga ramka na tym samym miejscu byla by szumem.
+it('draws no progress at all for an area that fits in one chunk', async () => {
+  const backend = stubStreamingApi(PLAN)
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+  await waitFor(() => expect(backend.chunksAsked()).toBe(1))
+
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe('brak')
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe('brak')
+  // Prostokat zeskanowanego obszaru zostaje: to on pokazuje, czego dotyczy analiza.
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe(DRAWN_LABEL)
+
+  await backend.answer(0, ANALYSIS)
+
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe('brak')
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe('brak')
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
+})
+
+// Przy bledzie policzone kawalki sa najwazniejsza informacja na mapie: mowia, ile obszaru model
+// obejrzal, zanim przestal odpowiadac.
+it('keeps the analysed chunks on the map when a chunk fails', async () => {
+  const backend = stubStreamingApi(TWO_CHUNK_PLAN)
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+  await waitFor(() => expect(backend.chunksAsked()).toBe(1))
+  await backend.answer(0, FIRST_CHUNK)
+
+  await backend.reject(1, 503, 'The model is not responding.')
+
+  expect(screen.getByText('The model is not responding.')).toBeDefined()
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe(FIRST_CHUNK_LABEL)
+  // Kawalek, ktory nie wrocil, nie jest juz „liczony teraz".
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe('brak')
+})
+
+// Zamkniecie panelu konczy wynik razem z postepem: ramka bez panelu, ktory ja tlumaczy, zostalaby
+// na mapie jako niebieski prostokat bez zdania.
+it('drops the progress together with the scan panel', async () => {
+  const backend = stubStreamingApi(TWO_CHUNK_PLAN)
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+  await waitFor(() => expect(backend.chunksAsked()).toBe(1))
+  await backend.answer(0, FIRST_CHUNK)
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe(FIRST_CHUNK_LABEL)
+
+  fireEvent.click(screen.getByLabelText('Close'))
+
+  expect(screen.getByTestId('map-analysing-chunk').textContent).toBe('brak')
+  expect(screen.getByTestId('map-analysed-chunks').textContent).toBe('brak')
 })
 
 /** Suwak progu w panelu — szukany po etykiecie, tak jak znalazlby go czytnik ekranu. */

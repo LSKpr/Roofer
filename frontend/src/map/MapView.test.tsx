@@ -4,6 +4,9 @@ import type { Bounds } from '../api/client'
 import { TILES_URL } from '../api/client'
 import { BASEMAPS, DEFAULT_BASEMAP, INITIAL_CENTER, INITIAL_ZOOM, basemapStyle } from './basemap'
 import {
+  CHUNK_CURRENT_SOURCE_ID,
+  CHUNK_DONE_SOURCE_ID,
+  CHUNK_LAYER_IDS,
   CLICKABLE_LAYER_IDS,
   HIGHLIGHT_LAYER_IDS,
   LAYER_IDS,
@@ -52,6 +55,39 @@ const AREA_RING = [
   [21.1, 51.26],
   [21.06, 51.26],
   [21.06, 51.24],
+]
+
+/**
+ * Podzial `AREA` na trzy kawalki, od zachodu na wschod — tak jak oddaje je `/api/area/plan`.
+ * Pierscienie stoja obok nich doslownie, bo to one sa tym, co mapa naprawde ma narysowac.
+ */
+const CHUNKS: Bounds[] = [
+  { ne: { lng: 21.08, lat: 51.26 }, sw: { lng: 21.06, lat: 51.24 } },
+  { ne: { lng: 21.09, lat: 51.26 }, sw: { lng: 21.08, lat: 51.24 } },
+  { ne: { lng: 21.1, lat: 51.26 }, sw: { lng: 21.09, lat: 51.24 } },
+]
+const CHUNK_RINGS = [
+  [
+    [21.06, 51.24],
+    [21.08, 51.24],
+    [21.08, 51.26],
+    [21.06, 51.26],
+    [21.06, 51.24],
+  ],
+  [
+    [21.08, 51.24],
+    [21.09, 51.24],
+    [21.09, 51.26],
+    [21.08, 51.26],
+    [21.08, 51.24],
+  ],
+  [
+    [21.09, 51.24],
+    [21.1, 51.24],
+    [21.1, 51.26],
+    [21.09, 51.26],
+    [21.09, 51.24],
+  ],
 ]
 
 /**
@@ -691,6 +727,196 @@ it('leaves the registry colours untouched under the suspected outlines', () => {
   expect(paintOf(LAYER_IDS.outline, 'line-color')).toEqual(outlineColor(true))
   expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('visible')
   expect(layerIds()).toContain(LAYER_IDS.fill)
+})
+
+/** Prostokat kawalka w zrodle: pojedynczy `Feature`, tak jak przy zeskanowanym obszarze. */
+function chunkFeature(ring: number[][]) {
+  return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } }
+}
+
+/** Policzone kawalki siedza w jednym zrodle jako kolekcja — po jednym prostokacie na kawalek. */
+function chunkCollection(rings: number[][][]) {
+  return { type: 'FeatureCollection', features: rings.map(chunkFeature) }
+}
+
+// Postep analizy: kawalek, ktory model liczy teraz. Bez tej ramki minuta pracy wyglada na
+// zawieszona, bo pomaranczowe obrysy pojawiaja sie dopiero po kazdym kawalku.
+it('frames the chunk under analysis from its own source, under the model outlines and the highlight', () => {
+  render(<MapView analysingChunk={CHUNKS[0]} suspectedRoofs={[ROOF]} />)
+  fire('style.load')
+
+  expect(sources.map(([id]) => id)).toContain(CHUNK_CURRENT_SOURCE_ID)
+  expect(sourceData(CHUNK_CURRENT_SOURCE_ID)).toEqual(chunkFeature(CHUNK_RINGS[0]))
+  const ids = layerIds()
+  // Nad budynkami (inaczej wypelnienie by ramke przykrylo), ale pod wynikiem modelu i pod wyborem.
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentFill)).toBeGreaterThan(ids.indexOf(LAYER_IDS.outline))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentOutline)).toBeLessThan(ids.indexOf(SUSPECTED_LAYER_IDS.outline))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentOutline)).toBeLessThan(ids.indexOf(LAYER_IDS.selectedFill))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentFill)).toBeLessThan(ids.indexOf(CHUNK_LAYER_IDS.currentOutline))
+})
+
+it('frames a chunk that arrives after the style has loaded, still under the highlight', () => {
+  const view = render(<MapView />)
+  fire('style.load')
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+
+  view.rerender(<MapView analysingChunk={CHUNKS[0]} />)
+
+  expect(sourceData(CHUNK_CURRENT_SOURCE_ID)).toEqual(chunkFeature(CHUNK_RINGS[0]))
+  const ids = layerIds()
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentOutline)).toBeLessThan(ids.indexOf(LAYER_IDS.selectedFill))
+})
+
+// Kawalki ida jeden po drugim, wiec ramka przeskakuje co kilkanascie sekund. Usuwanie i dodawanie
+// zrodla zabieraloby ze soba warstwy i mrugaloby ramka przy kazdym przeskoku.
+it('moves the frame to the next chunk without duplicating the source or the layers', () => {
+  const view = render(<MapView analysingChunk={CHUNKS[0]} />)
+  fire('style.load')
+
+  view.rerender(<MapView analysingChunk={CHUNKS[1]} />)
+
+  expect(sourceData(CHUNK_CURRENT_SOURCE_ID)).toEqual(chunkFeature(CHUNK_RINGS[1]))
+  expect(sources.filter(([id]) => id === CHUNK_CURRENT_SOURCE_ID)).toHaveLength(1)
+  expect(layerIds().filter((id) => id === CHUNK_LAYER_IDS.currentOutline)).toHaveLength(1)
+  expect(layerIds().filter((id) => id === CHUNK_LAYER_IDS.currentFill)).toHaveLength(1)
+})
+
+// To wypelnienie robi efekt przemiatania: zaznaczenie wypelnia sie od zachodu na wschod,
+// czyli w kolejnosci, w ktorej plan oddal kawalki.
+it('grows the analysed chunks one rectangle at a time', () => {
+  const view = render(<MapView analysedChunks={[CHUNKS[0]]} />)
+  fire('style.load')
+
+  expect(sourceData(CHUNK_DONE_SOURCE_ID)).toEqual(chunkCollection([CHUNK_RINGS[0]]))
+  expect(layerIds()).toContain(CHUNK_LAYER_IDS.doneFill)
+
+  view.rerender(<MapView analysedChunks={[CHUNKS[0], CHUNKS[1]]} />)
+  expect(sourceData(CHUNK_DONE_SOURCE_ID)).toEqual(chunkCollection([CHUNK_RINGS[0], CHUNK_RINGS[1]]))
+
+  view.rerender(<MapView analysedChunks={CHUNKS} />)
+  expect(sourceData(CHUNK_DONE_SOURCE_ID)).toEqual(chunkCollection(CHUNK_RINGS))
+  // Jedno zrodlo i jedna warstwa przez caly przebieg, mimo trzech podmian danych.
+  expect(sources.filter(([id]) => id === CHUNK_DONE_SOURCE_ID)).toHaveLength(1)
+  expect(layerIds().filter((id) => id === CHUNK_LAYER_IDS.doneFill)).toHaveLength(1)
+})
+
+// Policzone leza pod aktualnym kawalkiem, zeby jego ramka zostala czytelna na wspolnej granicy
+// dwoch sasiadujacych prostokatow.
+it('keeps the analysed fill under the chunk that is being analysed', () => {
+  render(<MapView analysingChunk={CHUNKS[1]} analysedChunks={[CHUNKS[0]]} />)
+  fire('style.load')
+
+  const ids = layerIds()
+  expect(ids.indexOf(CHUNK_LAYER_IDS.doneFill)).toBeLessThan(ids.indexOf(CHUNK_LAYER_IDS.currentFill))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.doneFill)).toBeGreaterThan(ids.indexOf(LAYER_IDS.outline))
+})
+
+// Ta kolejnosc powstaje takze wtedy, gdy warstwy dokladaja sie po kolei w trakcie pracy:
+// aktualny kawalek jest na mapie wczesniej niz pierwszy policzony.
+it('keeps the analysed fill under the current chunk even when it arrives later', () => {
+  const view = render(<MapView analysingChunk={CHUNKS[0]} />)
+  fire('style.load')
+
+  view.rerender(<MapView analysingChunk={CHUNKS[1]} analysedChunks={[CHUNKS[0]]} suspectedRoofs={[ROOF]} />)
+
+  const ids = layerIds()
+  expect(ids.indexOf(CHUNK_LAYER_IDS.doneFill)).toBeLessThan(ids.indexOf(CHUNK_LAYER_IDS.currentFill))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentOutline)).toBeLessThan(ids.indexOf(SUSPECTED_LAYER_IDS.outline))
+})
+
+// Koniec analizy: nie ma „aktualnego" kawalka, a policzone przestaja byc informacja — zostaje
+// sam wynik. Pusta lista znaczy tu to samo co `null`, inaczej niz przy wyniku modelu.
+it('takes both progress layers off the map when the analysis is over', () => {
+  const view = render(<MapView analysingChunk={CHUNKS[2]} analysedChunks={[CHUNKS[0], CHUNKS[1]]} />)
+  fire('style.load')
+
+  view.rerender(<MapView analysingChunk={null} analysedChunks={[]} />)
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+  expect(layerIds()).toEqual(Object.values(LAYER_IDS))
+})
+
+it('takes the progress off the map when the props go back to null', () => {
+  const view = render(<MapView analysingChunk={CHUNKS[0]} analysedChunks={[CHUNKS[0]]} />)
+  fire('style.load')
+
+  view.rerender(<MapView analysingChunk={null} analysedChunks={null} />)
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+  expect(layerIds()).toEqual(Object.values(LAYER_IDS))
+})
+
+// Blad kawalka: aktualnego juz nie ma, ale policzone zostaja — pokazuja, ile obszaru model
+// obejrzal, zanim przestal odpowiadac.
+it('keeps the analysed chunks after the current one disappears', () => {
+  const view = render(<MapView analysingChunk={CHUNKS[1]} analysedChunks={[CHUNKS[0]]} />)
+  fire('style.load')
+
+  view.rerender(<MapView analysingChunk={null} analysedChunks={[CHUNKS[0]]} />)
+
+  expect(layerIds()).not.toContain(CHUNK_LAYER_IDS.currentOutline)
+  expect(layerIds()).not.toContain(CHUNK_LAYER_IDS.currentFill)
+  expect(sources.map(([id]) => id)).not.toContain(CHUNK_CURRENT_SOURCE_ID)
+  expect(layerIds()).toContain(CHUNK_LAYER_IDS.doneFill)
+  expect(sourceData(CHUNK_DONE_SOURCE_ID)).toEqual(chunkCollection([CHUNK_RINGS[0]]))
+})
+
+// `setStyle` zabiera wszystko dodane recznie. Analiza trwa minute, wiec uzytkownik ma czas
+// przelaczyc podklad w jej trakcie — postep musi wrocic razem z geometria i na to samo miejsce.
+it('brings the analysis progress back after a basemap swap', () => {
+  const view = render(
+    <MapView analysingChunk={CHUNKS[1]} analysedChunks={[CHUNKS[0]]} suspectedRoofs={[ROOF]} basemap="standard" />,
+  )
+  fire('style.load')
+
+  view.rerender(
+    <MapView analysingChunk={CHUNKS[1]} analysedChunks={[CHUNKS[0]]} suspectedRoofs={[ROOF]} basemap="orthophoto" />,
+  )
+  expect(sources).toHaveLength(0)
+  expect(addedLayers).toHaveLength(0)
+
+  fire('style.load')
+
+  expect(sourceData(CHUNK_CURRENT_SOURCE_ID)).toEqual(chunkFeature(CHUNK_RINGS[1]))
+  expect(sourceData(CHUNK_DONE_SOURCE_ID)).toEqual(chunkCollection([CHUNK_RINGS[0]]))
+  const ids = layerIds()
+  expect(ids.indexOf(CHUNK_LAYER_IDS.doneFill)).toBeLessThan(ids.indexOf(CHUNK_LAYER_IDS.currentFill))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentOutline)).toBeLessThan(ids.indexOf(SUSPECTED_LAYER_IDS.outline))
+  expect(ids.indexOf(CHUNK_LAYER_IDS.currentOutline)).toBeLessThan(ids.indexOf(LAYER_IDS.selectedFill))
+})
+
+// Test-straznik, jak przy warstwie podejrzen: oba prostokaty przykrywaja fragmenty zaznaczenia,
+// wiec klikalne przejmowalyby kazde klikniecie w budynek pod spodem.
+it('never lets a click on the analysis progress pass as a click on a building', () => {
+  const onSelect = vi.fn()
+  render(<MapView analysingChunk={CHUNKS[0]} analysedChunks={[CHUNKS[1]]} onSelect={onSelect} />)
+  fire('style.load')
+  hits = [{ id: 42, layer: { id: LAYER_IDS.fill } }]
+  fire('click')
+
+  expect(queries[0][1]).toEqual({ layers: [LAYER_IDS.fill] })
+  for (const id of Object.values(CHUNK_LAYER_IDS)) {
+    expect(CLICKABLE_LAYER_IDS).not.toContain(id)
+    expect(handlers.filter((entry) => entry.layer === id)).toHaveLength(0)
+  }
+  // Klik trafia w budynek pod spodem, a nie w prostokat postepu nad nim.
+  expect(onSelect).toHaveBeenCalledWith(42)
+})
+
+// Postep jest dodatkiem do wyniku, nie jego zamiennikiem: prostokat zeskanowanego obszaru zostaje
+// bez zmian, a obrysy modelu i kolory rejestru nie traca nic.
+it('leaves the scanned rectangle and the registry colours untouched', () => {
+  const view = render(<MapView scannedArea={AREA} suspectedRoofs={[ROOF]} />)
+  fire('style.load')
+
+  view.rerender(
+    <MapView scannedArea={AREA} suspectedRoofs={[ROOF]} analysingChunk={CHUNKS[1]} analysedChunks={[CHUNKS[0]]} />,
+  )
+
+  expect(sourceData(SCAN_AREA_SOURCE_ID)).toMatchObject({ geometry: { coordinates: [AREA_RING] } })
+  expect(layerIds()).toContain(SCAN_AREA_LAYER_IDS.outline)
+  expect(sourceData(SUSPECTED_SOURCE_ID)).toMatchObject({ features: [{ geometry: ROOF_GEOMETRY }] })
+  expect(paintOf(LAYER_IDS.fill, 'fill-color')).toEqual(fillColor(true))
 })
 
 it('ignores a basemap prop that is already applied', () => {
