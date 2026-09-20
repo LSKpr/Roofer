@@ -1,8 +1,10 @@
 """Skan obszaru bez bazy: kazde zapytanie dostaje przygotowany wiersz z FakePool."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.area import (
+    AREA_KM2_DECIMALS,
     AREA_SCAN_SQL,
     MAX_AREA_KM2,
     BoundingBox,
@@ -248,3 +250,32 @@ def test_a_dead_database_degrades_to_503() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"] == "The database is not responding."
+
+
+def test_a_small_selection_keeps_its_square_metres() -> None:
+    """Powierzchnia w odpowiedzi ma opisywac zaznaczenie, a nie jego rzad wielkosci.
+
+    Zaokraglenie do trzech cyfr dawalo rozdzielczosc 1000 m²: prostokat 200 x 200 m wracal jako
+    0,04 km², czyli o 400 m² za maly, a panel pokazywal z tego „0.0 km²". Szesc cyfr to dokladnie
+    1 m², czyli tyle, ile wynosi rozdzielczosc wszystkich pozostalych powierzchni w tym API.
+    """
+    small = BoundingBox(south=51.2490, west=21.0780, north=51.2508, east=21.0809)
+    exact = bbox_area_km2(small)
+
+    scan = scan_from_row(None, area_km2=exact)
+
+    assert scan.area_km2 == round(exact, AREA_KM2_DECIMALS)
+    assert scan.area_km2 == pytest.approx(0.040398, abs=5e-7)
+    # W metrach: 40 398, a nie 40 000 — roznica, ktora zaokraglenie do trzech cyfr zjadalo.
+    assert round(scan.area_km2 * 1_000_000) == 40398
+
+
+def test_a_tiny_selection_does_not_round_down_to_nothing() -> None:
+    """Kwadrat 30 x 30 m to 900 m². Przy trzech cyfrach wracalo z tego 0,001 albo 0,0 — czyli
+    zaznaczenie, ktore istnieje, opisane liczba mowiaca, ze go nie ma."""
+    tiny = BoundingBox(south=51.2490, west=21.0780, north=51.24927, east=21.07843)
+
+    scan = scan_from_row(None, area_km2=bbox_area_km2(tiny))
+
+    assert scan.area_km2 > 0.0
+    assert round(scan.area_km2 * 1_000_000) > 500

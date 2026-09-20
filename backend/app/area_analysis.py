@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from math import cos, radians
 from typing import Any
 
-from app.area import EARTH_RADIUS_M, BoundingBox, bbox_area_km2, format_km2
+from app.area import AREA_KM2_DECIMALS, EARTH_RADIUS_M, BoundingBox, bbox_area_km2, format_km2
 from app.prediction import (
     MODEL_MAX_AREA_KM2,
     MODEL_MAX_BUILDINGS,
@@ -364,7 +364,7 @@ async def plan_chunks(
     return AreaPlan(
         chunks=chunks,
         buildings=total,
-        area_km2=round(bbox_area_km2(bbox), 3),
+        area_km2=round(bbox_area_km2(bbox), AREA_KM2_DECIMALS),
         truncated=truncated,
     )
 

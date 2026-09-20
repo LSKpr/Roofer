@@ -38,7 +38,18 @@ function areaLabel(squareMeters: number): string {
   return `${NUMBER_FORMAT.format(squareMeters)} m²`
 }
 
+/**
+ * Granica, poniżej ktorej powierzchnia zaznaczenia czyta sie lepiej w metrach.
+ *
+ * Stala jedna cyfra po kropce pokazywala kwadrat 200 × 200 m (0,0404 km²) jako „0.0 km²", czyli
+ * jako zero — a zaznaczenie z czterdziestoma tysiacami metrow kwadratowych zerem nie jest. Nizej
+ * podajemy metry, tak jak reszta panelu podaje powierzchnie dachow; wyzej kilometry, bo 686 000 m²
+ * jest trudniejsze do przeczytania niz 0,7 km².
+ */
+const SMALL_AREA_KM2 = 0.1
+
 function km2Label(squareKilometers: number): string {
+  if (squareKilometers < SMALL_AREA_KM2) return areaLabel(squareKilometers * 1_000_000)
   return `${KM2_FORMAT.format(squareKilometers)} km²`
 }
 

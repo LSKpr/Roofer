@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.area import BoundingBox, bbox_area_km2
+from app.area import AREA_KM2_DECIMALS, BoundingBox, bbox_area_km2
 from app.area_analysis import (
     MAX_CHUNK_DEPTH,
     MAX_CHUNKS,
@@ -200,7 +200,7 @@ async def test_a_selection_inside_the_limits_is_one_chunk_equal_to_the_selection
     ]
     assert plan.chunks[0].buildings == 400
     assert (plan.buildings, plan.truncated) == (400, False)
-    assert plan.area_km2 == round(bbox_area_km2(selection), 3)
+    assert plan.area_km2 == round(bbox_area_km2(selection), AREA_KM2_DECIMALS)
     assert len(asked) == 1
 
 
@@ -541,7 +541,7 @@ def test_the_endpoint_answers_with_chunks_and_the_totals_for_the_whole_selection
     assert response.status_code == 200
     body = response.json()
     assert body["buildings"] == 1338
-    assert body["areaKm2"] == round(bbox_area_km2(box(DENSE_SELECTION)), 3)
+    assert body["areaKm2"] == round(bbox_area_km2(box(DENSE_SELECTION)), AREA_KM2_DECIMALS)
     assert body["truncated"] is False
     assert len(body["chunks"]) == 4
     assert body["chunks"][0] == {

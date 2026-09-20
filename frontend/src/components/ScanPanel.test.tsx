@@ -997,3 +997,48 @@ it('mowi przy liscie, skad bierze sie ocena i czego brak w rejestrze nie znaczy'
   expect(section.getByText(/not that anything is unlawful/)).toBeDefined()
   expect(section.getByText('This is a list to check on site, not a list of findings.')).toBeDefined()
 })
+
+/*
+ * Powierzchnia zaznaczenia. Stala jedna cyfra po kropce pokazywala maly prostokat jako „0.0 km²",
+ * czyli jako zero — a backend liczy te powierzchnie poprawnie (nasz wzor na kuli rozni sie od
+ * ST_Area(geography) o stale 0,37%, czyli o roznice kuli i elipsoidy WGS84). Blad byl wylacznie
+ * w zapisie liczby, wiec te testy pilnuja zapisu.
+ */
+it('podaje mala powierzchnie zaznaczenia w metrach, a nie jako zero kilometrow', () => {
+  // Kwadrat okolo 200 × 200 m pod Zwoleniem: 0,0404 km², czyli czterdziesci tysiecy metrow.
+  renderPanel(aSmallScan({ areaKm2: 0.0404 }))
+
+  expect(screen.getByText('40,400 m²')).toBeDefined()
+  expect(screen.queryByText('0.0 km²')).toBeNull()
+})
+
+it('powyzej granicy podaje kilometry z jedna cyfra', () => {
+  renderPanel(aSmallScan({ areaKm2: 0.686 }))
+  expect(screen.getByText('0.7 km²')).toBeDefined()
+
+  renderPanel(aSmallScan({ areaKm2: 24.861 }))
+  expect(screen.getByText('24.9 km²')).toBeDefined()
+})
+
+// Granica jest granica: 0,1 km² to juz kilometry, ani grosza nizej.
+it('przelacza jednostke dokladnie na granicy dziesiatej czesci kilometra', () => {
+  renderPanel(aSmallScan({ areaKm2: 0.1 }))
+  expect(screen.getByText('0.1 km²')).toBeDefined()
+
+  renderPanel(aSmallScan({ areaKm2: 0.0999 }))
+  expect(screen.getByText('99,900 m²')).toBeDefined()
+})
+
+// Obszar bez budynkow ma swoj wlasny panel, a w nim ten sam wiersz — i ten sam blad by w nim byl.
+it('podaje powierzchnie w metrach takze w obszarze bez budynkow', () => {
+  const empty = aSmallScan({
+    stats: someStats({ total: 0, listed: 0, notListed: 0, listedShare: 0, roofAreaM2: 0, listedRoofAreaM2: 0, registryRecords: 0 }),
+    areaKm2: 0.0404,
+    listedBuildings: [],
+  })
+
+  renderPanel(empty)
+
+  expect(screen.getByText('There are no OpenStreetMap buildings in this area.')).toBeDefined()
+  expect(screen.getByText('40,400 m²')).toBeDefined()
+})

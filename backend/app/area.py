@@ -34,6 +34,14 @@ MAX_LISTED_BUILDINGS = 500
 # Sredni promien Ziemi (IUGG), ten sam, ktorego uzywa PostGIS jako promienia kuli.
 EARTH_RADIUS_M = 6371008.8
 
+# Ile cyfr po kropce zostawiamy w `areaKm2` w odpowiedziach. Szesc, bo 1e-6 km² to dokladnie
+# 1 m² — czyli ta sama rozdzielczosc, w ktorej podajemy wszystkie inne powierzchnie.
+#
+# Wczesniej bylo trzy, co daje rozdzielczosc 1000 m²: prostokat 200 x 200 m (0,0404 km²) wracal
+# jako 0,04, czyli o 400 m² za maly, a zaznaczenie 30 x 30 m zaokraglaloby sie do zera. Liczba
+# w odpowiedzi ma opisywac zaznaczenie, a nie jego rzad wielkosci.
+AREA_KM2_DECIMALS = 6
+
 _ENVELOPE = "ST_MakeEnvelope(%(west)s, %(south)s, %(east)s, %(north)s, 4326)"
 
 AREA_SCAN_SQL = f"""
@@ -191,7 +199,9 @@ def scan_from_row(
 ) -> AreaScan:
     """Wiersz z AREA_SCAN_SQL na statystyki. Pusty obszar to zera, nie blad."""
     if row is None:
-        return AreaScan(stats=EMPTY_STATS, listed_buildings=[], truncated=False, area_km2=round(area_km2, 3))
+        return AreaScan(
+            stats=EMPTY_STATS, listed_buildings=[], truncated=False, area_km2=round(area_km2, AREA_KM2_DECIMALS)
+        )
     total, listed, roof_area_m2, listed_roof_area_m2, registry_records, buildings = row[:6]
     total, listed = int(total), int(listed)
     found = list(buildings or [])
@@ -207,7 +217,7 @@ def scan_from_row(
         ),
         listed_buildings=found[:limit],
         truncated=len(found) > limit,
-        area_km2=round(area_km2, 3),
+        area_km2=round(area_km2, AREA_KM2_DECIMALS),
     )
 
 
