@@ -5,7 +5,29 @@ Express/Prisma/MySQL backend, a Next.js + Leaflet frontend, and a FastAPI/ONNX M
 phase by phase in the order given in section 10; do not start a phase that was not named, and do not
 change the stack in section 3 without asking.
 
-The new stack is not implemented yet. Until it is, there are no build or test commands for it.
+F0 is done: pnpm workspace with `packages/{database,validation,backend,frontend}`, shared
+`tsconfig.base.json`, flat ESLint config, `docker-compose.yml` with MySQL 8.4, `.env.example`.
+The packages are scaffolding; their `src/index.ts` files are empty on purpose.
+
+- Install: `pnpm install`
+- Build every package: `pnpm build`
+- Type check: `pnpm typecheck`
+- Lint: `pnpm lint`
+- Database: `pnpm db:up` / `pnpm db:down` (MySQL on `localhost:3306`, user/password/db all `roofer`)
+
+Version constraints found by running the toolchain, not by guessing:
+
+- pnpm is pinned to 11.27.0. pnpm 12 is a Rust rewrite whose native binary the Node 22 corepack
+  (0.31) cannot install, so `corepack pnpm` fails outright on it.
+- pnpm 11 removed `onlyBuiltDependencies`; build approval lives in `allowBuilds` in
+  `pnpm-workspace.yaml`. The old key is silently ignored and the install fails with
+  `ERR_PNPM_IGNORED_BUILDS`.
+- TypeScript is pinned to 6.0.3. TS 7.0 compiles and builds fine, but typescript-eslint 8.70
+  refuses to load against it, so linting is impossible on TS 7.
+- `pnpm` reaches PATH through a corepack shim in `%APPDATA%\npm`; `corepack enable` without
+  `--install-directory` needs administrator rights on this machine.
+- Docker Desktop is installed but not on PATH in a plain shell. Prefix with
+  `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` when needed.
 
 Decisions that override the legacy prototype:
 
@@ -14,8 +36,6 @@ Decisions that override the legacy prototype:
   probe is less precise and returns no record attributes.
 - The ML prediction service is deferred. Keep `isPotentiallyAsbestos` nullable and leave it `null`
   rather than writing `false` for an unchecked building.
-
-Node 22.14 and Docker 29.8 are installed locally. pnpm is not on PATH; run it through `corepack pnpm`.
 
 # Legacy prototype (`legacy/`)
 
