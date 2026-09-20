@@ -14,9 +14,12 @@ import {
   SOURCE_ID,
   SOURCE_MAX_ZOOM,
   STATUS_COLORS,
+  SUSPECTED_LAYER_IDS,
+  SUSPECTED_SOURCE_ID,
   fillColor,
   outlineColor,
 } from './layers'
+import type { SuspectedRoof } from './layers'
 import { MapView } from './MapView'
 
 type MapEvent = { point: { x: number; y: number } }
@@ -50,6 +53,38 @@ const AREA_RING = [
   [21.06, 51.26],
   [21.06, 51.24],
 ]
+
+/**
+ * Budynek z modelu. Geometria przychodzi z backendu gotowa, wiec test podaje ja doslownie
+ * i sprawdza, ze mapa oddaje dokladnie te wspolrzedne — nie przeliczone, nie z `Bounds`.
+ */
+const ROOF_GEOMETRY = {
+  type: 'Polygon' as const,
+  coordinates: [
+    [
+      [21.0701, 51.2501],
+      [21.0709, 51.2501],
+      [21.0709, 51.2507],
+      [21.0701, 51.2507],
+      [21.0701, 51.2501],
+    ],
+  ],
+}
+/** Niezgloszony, a model widzi eternit — przypadek, dla ktorego ta warstwa w ogole powstala. */
+const ROOF: SuspectedRoof = {
+  id: 27469148,
+  probability: 0.81,
+  listed: false,
+  areaM2: 126.6,
+  geometry: ROOF_GEOMETRY,
+}
+const OTHER_ROOF: SuspectedRoof = {
+  id: 28287777,
+  probability: 0.64,
+  listed: true,
+  areaM2: 67.9,
+  geometry: { type: 'Polygon', coordinates: [[[20.4, 52.2]]] },
+}
 
 /**
  * Zrodlo GeoJSON w atrapie naprawde trzyma dane: `setData` nadpisuje `data`, tak jak w MapLibre.
@@ -123,8 +158,13 @@ vi.mock('maplibre-gl', () => ({
     }
     // Kopia, nie referencja: warstwa na mapie ma zyc wlasnym zyciem, a `setPaintProperty`
     // na wspoldzielonym obiekcie nadpisywaloby definicje warstwy z layers.ts na caly plik testow.
-    addLayer(layer: AddedLayer) {
-      addedLayers.push({ ...layer })
+    //
+    // `beforeId` wstawia warstwe POD wskazana, tak jak w MapLibre: bez tego mock zawsze dokladalby
+    // na wierzch i test kolejnosci nie odroznilby warstwy pod podswietleniem od warstwy nad nim.
+    addLayer(layer: AddedLayer, beforeId?: string) {
+      const index = beforeId === undefined ? -1 : addedLayers.findIndex((entry) => entry.id === beforeId)
+      if (index >= 0) addedLayers.splice(index, 0, { ...layer })
+      else addedLayers.push({ ...layer })
     }
     getLayer(id: string) {
       return addedLayers.find((layer) => layer.id === id)
@@ -529,6 +569,128 @@ it('keeps the registry highlight off after a basemap swap', () => {
   expect(paintOf(LAYER_IDS.fill, 'fill-color')).toBe(STATUS_COLORS.notListed)
   expect(paintOf(LAYER_IDS.outline, 'line-color')).toBe(STATUS_COLORS.notListed)
   expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('none')
+})
+
+// Warstwa podejrzen modelu. Obrys idzie nad budynki (inaczej wypelnienie by go przykrylo),
+// ale pod podswietlenie wyboru: klikniety budynek ma zostac najmocniejsza rzecza na mapie.
+it('draws the suspected roofs from their own source, above the buildings and under the highlight', () => {
+  render(<MapView suspectedRoofs={[ROOF]} />)
+  fire('style.load')
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID, SUSPECTED_SOURCE_ID])
+  expect(sourceData(SUSPECTED_SOURCE_ID)).toEqual({
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        id: ROOF.id,
+        properties: { probability: ROOF.probability },
+        geometry: ROOF_GEOMETRY,
+      },
+    ],
+  })
+  const ids = layerIds()
+  expect(ids.indexOf(SUSPECTED_LAYER_IDS.outline)).toBeGreaterThan(ids.indexOf(LAYER_IDS.outline))
+  expect(ids.indexOf(SUSPECTED_LAYER_IDS.outline)).toBeLessThan(ids.indexOf(LAYER_IDS.selectedFill))
+})
+
+// Zwykla kolej rzeczy: mapa stoi, uzytkownik puszcza obszar przez model i dopiero wtedy
+// przychodza wyniki. Miejsce w stosie musi byc to samo co po zaladowaniu stylu.
+it('draws roofs that arrive after the style has loaded, still under the highlight', () => {
+  const view = render(<MapView />)
+  fire('style.load')
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+
+  view.rerender(<MapView suspectedRoofs={[ROOF]} />)
+
+  expect(sourceData(SUSPECTED_SOURCE_ID)).toMatchObject({ features: [{ geometry: ROOF_GEOMETRY }] })
+  const ids = layerIds()
+  expect(ids.indexOf(SUSPECTED_LAYER_IDS.outline)).toBeGreaterThan(ids.indexOf(LAYER_IDS.fill))
+  expect(ids.indexOf(SUSPECTED_LAYER_IDS.outline)).toBeLessThan(ids.indexOf(LAYER_IDS.selectedOutline))
+})
+
+// Kolejny przebieg modelu podmienia zawartosc warstwy. Usuwanie i dodawanie zrodla zabieraloby
+// ze soba warstwe i mrugaloby obrysami przy kazdym wyniku.
+it('replaces the suspected roofs without duplicating the source or the layer', () => {
+  const view = render(<MapView suspectedRoofs={[ROOF]} />)
+  fire('style.load')
+
+  view.rerender(<MapView suspectedRoofs={[OTHER_ROOF]} />)
+
+  expect(sourceData(SUSPECTED_SOURCE_ID)).toMatchObject({
+    features: [{ id: OTHER_ROOF.id, geometry: OTHER_ROOF.geometry }],
+  })
+  expect(sources.filter(([id]) => id === SUSPECTED_SOURCE_ID)).toHaveLength(1)
+  expect(layerIds().filter((id) => id === SUSPECTED_LAYER_IDS.outline)).toHaveLength(1)
+})
+
+// Pusta lista to odpowiedz modelu „nic tu nie widze", a nie brak wyniku: warstwa zostaje,
+// tylko bez obiektow — inaczej nastepny wynik musialby ja stawiac od zera.
+it('keeps an empty layer when the model returns nothing', () => {
+  render(<MapView suspectedRoofs={[]} />)
+  fire('style.load')
+
+  expect(sourceData(SUSPECTED_SOURCE_ID)).toEqual({ type: 'FeatureCollection', features: [] })
+  expect(layerIds()).toContain(SUSPECTED_LAYER_IDS.outline)
+})
+
+it('takes the suspected outlines off the map when the list goes back to null', () => {
+  const view = render(<MapView suspectedRoofs={[ROOF]} />)
+  fire('style.load')
+
+  view.rerender(<MapView suspectedRoofs={null} />)
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+  expect(layerIds()).toEqual(Object.values(LAYER_IDS))
+})
+
+// `setStyle` zabiera wszystko dodane recznie. Wynik modelu nie znika przez to, ze uzytkownik
+// przelaczyl podklad — ma wrocic razem z geometria i na to samo miejsce w stosie.
+it('brings the suspected outlines back after a basemap swap', () => {
+  const view = render(<MapView suspectedRoofs={[ROOF]} basemap="standard" />)
+  fire('style.load')
+
+  view.rerender(<MapView suspectedRoofs={[ROOF]} basemap="orthophoto" />)
+  expect(sources).toHaveLength(0)
+  expect(addedLayers).toHaveLength(0)
+
+  fire('style.load')
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID, SUSPECTED_SOURCE_ID])
+  expect(sourceData(SUSPECTED_SOURCE_ID)).toMatchObject({ features: [{ geometry: ROOF_GEOMETRY }] })
+  const ids = layerIds()
+  expect(ids.indexOf(SUSPECTED_LAYER_IDS.outline)).toBeGreaterThan(ids.indexOf(LAYER_IDS.outline))
+  expect(ids.indexOf(SUSPECTED_LAYER_IDS.outline)).toBeLessThan(ids.indexOf(LAYER_IDS.selectedFill))
+})
+
+// Test-straznik: obrys modelu lezy dokladnie na budynku, wiec klikalny przejmowalby kazde
+// klikniecie w niego. Karta budynku (z pelna ocena i nota) otwiera sie z warstwy wypelnienia.
+it('never lets a click on a suspected outline pass as a click on a building', () => {
+  const onSelect = vi.fn()
+  render(<MapView suspectedRoofs={[ROOF]} onSelect={onSelect} />)
+  fire('style.load')
+  hits = [{ id: ROOF.id, layer: { id: LAYER_IDS.fill } }]
+  fire('click')
+
+  expect(queries[0][1]).toEqual({ layers: [LAYER_IDS.fill] })
+  expect(CLICKABLE_LAYER_IDS).not.toContain(SUSPECTED_LAYER_IDS.outline)
+  // Klik trafia w budynek pod spodem, a nie w obrys nad nim.
+  expect(onSelect).toHaveBeenCalledWith(ROOF.id)
+  expect(handlers.filter((entry) => entry.layer === SUSPECTED_LAYER_IDS.outline)).toHaveLength(0)
+})
+
+// Sedno warstwy: „jest w rejestrze" i „model cos widzi" to dwie rozne informacje i musza dac sie
+// odczytac na tym samym budynku. Obrys nie moze niczego zabrac wypelnieniu ani cieplu.
+it('leaves the registry colours untouched under the suspected outlines', () => {
+  const view = render(<MapView />)
+  fire('style.load')
+
+  view.rerender(<MapView suspectedRoofs={[ROOF]} />)
+
+  expect(paintOf(LAYER_IDS.fill, 'fill-color')).toEqual(fillColor(true))
+  expect(paintOf(LAYER_IDS.outline, 'line-color')).toEqual(outlineColor(true))
+  expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('visible')
+  expect(layerIds()).toContain(LAYER_IDS.fill)
 })
 
 it('ignores a basemap prop that is already applied', () => {

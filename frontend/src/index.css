@@ -23,6 +23,11 @@
   --color-listed: #c8102e;
   --color-not-listed: #9aa5ad;
 
+  /* Podejrzenie modelu, nie wpis w rejestrze: pomarancz stoi obok czerwieni, ale nigdy jej nie
+     zastepuje — czerwien znaczy „ktos zglosil", pomarancz „model cos widzi na zdjeciu".
+     Ten sam hex co `SUSPECTED_COLOR` w map/layers.ts, bo MapLibre nie czyta zmiennych CSS. */
+  --color-suspected: #ed8b00;
+
   --radius-card: 2px;
   --font-display: Georgia, 'Times New Roman', serif;
 }

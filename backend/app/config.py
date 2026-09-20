@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # odpowiedzi, a chroni przed limitem 10 zapytan na minute po stronie tamtej instancji.
     prediction_cache_ttl_s: float = 3600.0
     prediction_min_interval_s: float = 6.0
+    # Skan obszaru pyta o setke budynkow naraz, wiec ma wlasny, dluzszy limit czasu. Tamta
+    # instancja i tak przerywa zadanie po 180 s — czekanie dluzej niczego by nie doczekalo.
+    prediction_area_timeout_s: float = 180.0
 
     @property
     def allowed_origins(self) -> list[str]:

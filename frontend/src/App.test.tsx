@@ -16,6 +16,14 @@ function areaLabel(area: StubBounds | null | undefined): string {
   return `${area.sw.lng},${area.sw.lat},${area.ne.lng},${area.ne.lat}`
 }
 
+type StubRoof = { id: number; probability: number }
+
+/** Mapa dostaje liste dachow; w tescie wystarcza ich identyfikatory w jednej linii. */
+function roofsLabel(roofs: StubRoof[] | null | undefined): string {
+  if (!roofs) return 'brak'
+  return roofs.map((roof) => roof.id).join(',')
+}
+
 vi.mock('./map/MapView', () => ({
   MapView: ({
     onSelect,
@@ -25,6 +33,7 @@ vi.mock('./map/MapView', () => ({
     drawing,
     scannedArea,
     showRegistry,
+    suspectedRoofs,
   }: {
     onSelect?: (id: number | null) => void
     onZoomChange?: (zoom: number) => void
@@ -33,12 +42,14 @@ vi.mock('./map/MapView', () => ({
     drawing?: boolean
     scannedArea?: StubBounds | null
     showRegistry?: boolean
+    suspectedRoofs?: StubRoof[] | null
   }) => (
     <div>
       {/* Propsy sterujace mapa wystawiamy jako tekst, zeby dalo sie je sprawdzic bez MapLibre. */}
       <span data-testid="map-basemap">{basemap}</span>
       <span data-testid="map-drawing">{drawing ? 'rysuje' : 'nie rysuje'}</span>
       <span data-testid="map-scanned-area">{areaLabel(scannedArea)}</span>
+      <span data-testid="map-suspected-roofs">{roofsLabel(suspectedRoofs)}</span>
       {/* Tekst, a nie booleana: `undefined` ma byc widoczny jako blad, a nie jako „wylaczone". */}
       <span data-testid="map-show-registry">{String(showRegistry)}</span>
       <button type="button" onClick={() => onSelect?.(42)}>
@@ -80,28 +91,62 @@ const BUILDING: Building = {
   otherIntersecting: 0,
 }
 
+// Obszar miesci sie w limitach modelu (100 budynkow, 4 km2), wiec przycisk analizy jest czynny.
 const SCAN = {
   stats: {
-    total: 1338,
-    listed: 624,
-    notListed: 714,
+    total: 74,
+    listed: 35,
+    notListed: 39,
     listedShare: 0.4664,
-    roofAreaM2: 158292.7,
-    listedRoofAreaM2: 60558.1,
-    registryRecords: 681,
+    roofAreaM2: 9123.4,
+    listedRoofAreaM2: 4021.1,
+    registryRecords: 38,
   },
   listedBuildings: [{ id: 42, areaM2: 479.5, centroid: { lng: 21.07, lat: 51.246 }, nrDzialki: '142511_2.0012.2.2077/21' }],
   truncated: false,
-  areaKm2: 4.0,
+  areaKm2: 0.6,
 }
 
-function stubApi(overrides: { health?: [number, unknown]; building?: [number, unknown]; scan?: [number, unknown] } = {}) {
+/** Trzeci dach ma ocene ponizej progu — mapa nie ma prawa go dostac. */
+const ANALYSIS = {
+  stats: {
+    analysed: 64,
+    noResult: 10,
+    suspected: 16,
+    suspectedShare: 0.25,
+    suspectedNotListed: 14,
+    suspectedListed: 2,
+    listedNotSuspected: 1,
+    suspectedRoofAreaM2: 2431.5,
+    threshold: 0.5,
+    modelName: '70b702',
+  },
+  buildings: [
+    { id: 42, probability: 0.72, listed: false, areaM2: 163, geometry: { type: 'Polygon', coordinates: [] } },
+    { id: 77, probability: 0.81, listed: true, areaM2: 210, geometry: { type: 'Polygon', coordinates: [] } },
+    { id: 99, probability: 0.31, listed: false, areaM2: 88, geometry: { type: 'Polygon', coordinates: [] } },
+  ],
+  truncated: false,
+}
+
+const LIMITS = { maxAreaKm2: 25, model: { maxBuildings: 100, maxAreaKm2: 4 } }
+
+function stubApi(
+  overrides: {
+    health?: [number, unknown]
+    building?: [number, unknown]
+    scan?: [number, unknown]
+    analysis?: [number, unknown]
+  } = {},
+) {
   const [healthStatus, healthBody] = overrides.health ?? [200, HEALTH]
   const [buildingStatus, buildingBody] = overrides.building ?? [200, BUILDING]
   const [scanStatus, scanBody] = overrides.scan ?? [200, SCAN]
+  const [analysisStatus, analysisBody] = overrides.analysis ?? [200, ANALYSIS]
   const fetchStub = vi.fn((url: string) => {
-    if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => ({ maxAreaKm2: 25 }) })
+    if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => LIMITS })
     if (url.includes('/api/area/scan')) return Promise.resolve({ status: scanStatus, json: async () => scanBody })
+    if (url.includes('/api/area/analyze')) return Promise.resolve({ status: analysisStatus, json: async () => analysisBody })
     if (url.includes('/api/buildings/')) return Promise.resolve({ status: buildingStatus, json: async () => buildingBody })
     return Promise.resolve({ status: healthStatus, json: async () => healthBody })
   })
@@ -325,6 +370,88 @@ it('closes the card when the map selection is cleared', async () => {
   fireEvent.click(screen.getByText('odznacz'))
 
   expect(screen.queryByText(/141210_5\.0017\.105\/1/)).toBeNull()
+})
+
+/** Skan i klikniecie w przycisk analizy — te same trzy ruchy powtarzaja sie w testach modelu. */
+async function scanAndAnalyse() {
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+  return await screen.findByTestId('suspected-not-listed')
+}
+
+// Model kosztuje kilka sekund i ma twarde limity, wiec nie wolno go wolac samym zaznaczeniem.
+it('does not call the model until the user asks for it', async () => {
+  const fetchStub = stubApi()
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  await screen.findByText('47%')
+
+  expect(fetchStub.mock.calls.some((call) => String(call[0]).includes('/api/area/analyze'))).toBe(false)
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('brak')
+})
+
+it('shows the model result and hands the map only the roofs above the threshold', async () => {
+  const fetchStub = stubApi()
+
+  render(<App />)
+  const leading = await scanAndAnalyse()
+
+  expect(leading.textContent).toBe('14')
+  // 42 i 77 sa powyzej progu 0,5; 99 z ocena 0,31 nie jest podejrzeniem i nie trafia na mape.
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
+  expect(fetchStub.mock.calls.some((call) => String(call[0]).includes('/api/area/analyze'))).toBe(true)
+})
+
+it('shows the model error exactly as the backend worded it', async () => {
+  stubApi({ analysis: [503, { detail: 'The model is not responding. Try again in a moment.' }] })
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+
+  expect(await screen.findByText('The model is not responding. Try again in a moment.')).toBeDefined()
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('brak')
+})
+
+// Pomaranczowe obrysy bez panelu, ktory je tlumaczy, zostalyby na mapie jako kolor bez zdania.
+it('drops the model result together with the scan panel', async () => {
+  stubApi()
+
+  render(<App />)
+  await scanAndAnalyse()
+
+  fireEvent.click(screen.getByLabelText('Close'))
+
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('brak')
+  expect(screen.queryByTestId('suspected-not-listed')).toBeNull()
+})
+
+it('clears the previous analysis as soon as the user starts a new selection', async () => {
+  stubApi()
+
+  render(<App />)
+  await scanAndAnalyse()
+
+  fireEvent.click(screen.getByText('Select'))
+
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('brak')
+  expect(screen.queryByTestId('suspected-not-listed')).toBeNull()
+})
+
+// Karta budynku zaslania panel skanu, ale nie uniewaznia oceny — obrysy zostaja na mapie.
+it('keeps the model result on the map after the user opens a building', async () => {
+  stubApi()
+
+  render(<App />)
+  await scanAndAnalyse()
+  fireEvent.click(screen.getByText('Parcel 142511_2.0012.2.2077/21'))
+  await screen.findByText(/141210_5\.0017\.105\/1/)
+
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
 })
 
 it('explains an empty map instead of leaving it looking broken', async () => {

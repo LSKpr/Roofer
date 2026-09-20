@@ -304,13 +304,21 @@ MODEL_BUSY_NOTE = (
 )
 
 
-def analyze_request(building: BuildingShape) -> dict[str, dict[str, float]]:
-    """Cialo zapytania: prostokat budynku w WGS84, naroznik SW i NE — tak jak chce API modelu."""
-    west, south, east, north = building.bbox
+def area_request(west: float, south: float, east: float, north: float) -> dict[str, dict[str, float]]:
+    """Cialo zapytania: prostokat w WGS84, naroznik SW i NE — tak jak chce API modelu.
+
+    Zamiana `longitude` z `latitude` daje zapytanie, ktore wyglada poprawnie i dotyczy innego
+    miejsca w Polsce, wiec ksztalt tego slownika pilnuje osobny test.
+    """
     return {
         "south_west": {"longitude": west, "latitude": south},
         "north_east": {"longitude": east, "latitude": north},
     }
+
+
+def analyze_request(building: BuildingShape) -> dict[str, dict[str, float]]:
+    """Prostokat jednego budynku. To samo cialo co dla obszaru — API modelu zna tylko bbox."""
+    return area_request(*building.bbox)
 
 
 def find_feature(payload: dict[str, Any], osm_id: int) -> dict[str, Any] | None:
@@ -366,6 +374,149 @@ def analysis_from_properties(properties: dict[str, Any], model_id: str | None) -
     )
 
 
+# Limity tamtej instancji, podane przez jej `/health` i potwierdzone na zywo: wiekszy prostokat
+# dostaje `413 TOO_MANY_BUILDINGS`. Sa tutaj, a nie w app/area.py, bo to limity CUDZEGO serwisu —
+# nasza bramka (app/area_analysis.py) tylko je czyta i zglasza uzytkownikowi wlasnymi liczbami.
+MODEL_MAX_BUILDINGS = 100
+MODEL_MAX_AREA_KM2 = 4.0
+
+# Ile sekund czekamy na ocene calego prostokata. Tamta instancja przerywa zadanie po 180 s, wiec
+# czekanie dluzej nie ma sensu; 74 budynki policzyla w 2,7 s, czyli to jest zapas, nie norma.
+AREA_TIMEOUT_S = 180.0
+
+# Komunikaty 503 dla skanu obszaru. Trafiaja wprost do `detail`, wiec sa po angielsku jak caly
+# interfejs i zadny z nich nie udaje wyniku: brak odpowiedzi modelu to brak oceny, nie zero.
+AREA_SERVICE_DOWN = (
+    "The roof covering model did not answer, so the selected area was not analysed. "
+    "No result is not the same as zero — try again in a moment."
+)
+
+AREA_SERVICE_BUSY = (
+    "The roof covering model is busy and asked for a pause ({seconds} s), so the selected area "
+    "was not analysed. Try again in a moment."
+)
+
+AREA_SERVICE_REFUSED = (
+    "The roof covering model refused the request (HTTP {status}), so the selected area was not "
+    "analysed. No result is not the same as zero."
+)
+
+AREA_SERVICE_UNNAMED = (
+    "The roof covering model did not say which model produced the scores, so nothing is shown — "
+    "a score that cannot be attributed to a model cannot be checked by anyone."
+)
+
+AREA_MODEL_MISSING = (
+    "The roof covering model is not connected, so the selected area was not analysed. "
+    "No result is not the same as zero."
+)
+
+
+class ModelUnavailable(RuntimeError):
+    """Model nie odpowiedzial albo odpowiedzial czyms, czego nie wolno pokazac jako wyniku.
+
+    Niesie gotowy komunikat po angielsku, bo trasa oddaje go w `detail` odpowiedzi 503. Wyjatek,
+    a nie pusty wynik, zeby nie dalo sie przez nieuwage policzyc statystyk „z niczego" i pokazac
+    ich jako zero ocenionych budynkow.
+    """
+
+
+@dataclass(frozen=True)
+class ModelBuilding:
+    """Jeden budynek z odpowiedzi obszarowej: ocena albo jawny jej brak, plus geometria od modelu.
+
+    Geometrie przepuszczamy dalej bez przeliczania — to pelny obrys dachu z tego samego snapshotu
+    OSM, ktory mamy u siebie, wiec przerysowywanie go z naszej bazy niczego by nie poprawilo,
+    a moglo rozjechac sie z tym, co model faktycznie ocenial.
+    """
+
+    osm_id: int
+    status: str
+    probability: float | None
+    geometry: dict[str, Any] | None = None
+
+    @property
+    def scored(self) -> bool:
+        """Tylko `status: ok` z liczba to ocena. Reszta to „nie wiemy", nigdy „czysty dach"."""
+        return self.probability is not None
+
+
+@dataclass(frozen=True)
+class AreaModelResult:
+    """Odpowiedz modelu dla calego prostokata. `model_name` jest wymagane — wynik bez nazwy modelu
+    nie ma jak zostac sprawdzony, wiec `area_result_from_payload` woli rzucic ModelUnavailable."""
+
+    model_name: str
+    buildings: list[ModelBuilding]
+
+
+def model_building_from_feature(feature: dict[str, Any]) -> ModelBuilding | None:
+    """Obiekt GeoJSON z odpowiedzi modelu na `ModelBuilding`; None, gdy nie ma `source_id`.
+
+    Ocena spoza zakresu 0-1 jest traktowana jak brak oceny: liczba, ktorej nie umiemy nazwac
+    prawdopodobienstwem, nie ma prawa wejsc do statystyk.
+    """
+    properties = feature.get("properties") or {}
+    raw_id = properties.get("source_id")
+    try:
+        osm_id = int(str(raw_id))
+    except (TypeError, ValueError):
+        return None
+
+    status = str(properties.get("status") or "")
+    raw_probability = properties.get("asbestos_probability")
+    probability: float | None = None
+    if status == MODEL_STATUS_OK and raw_probability is not None:
+        try:
+            value = round(float(raw_probability), 4)
+        except (TypeError, ValueError):
+            value = -1.0
+        probability = value if 0.0 <= value <= 1.0 else None
+
+    geometry = feature.get("geometry")
+    return ModelBuilding(
+        osm_id=osm_id,
+        status=status,
+        probability=probability,
+        geometry=geometry if isinstance(geometry, dict) else None,
+    )
+
+
+def area_result_from_payload(payload: dict[str, Any]) -> AreaModelResult:
+    """FeatureCollection od modelu na liste budynkow. Powtorzony `source_id` liczy sie raz.
+
+    Duplikat nie powinien wystapic, ale gdyby wystapil, podwoilby budynek w kazdym liczniku —
+    a liczniki tego endpointu sa cala jego trescia.
+    """
+    model_id = (payload.get("meta") or {}).get("model_id")
+    if not model_id:
+        raise ModelUnavailable(AREA_SERVICE_UNNAMED)
+
+    buildings: list[ModelBuilding] = []
+    seen: set[int] = set()
+    for feature in payload.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        building = model_building_from_feature(feature)
+        if building is None or building.osm_id in seen:
+            continue
+        seen.add(building.osm_id)
+        buildings.append(building)
+    return AreaModelResult(model_name=str(model_id), buildings=buildings)
+
+
+@runtime_checkable
+class AreaModelProvider(Protocol):
+    """Drugie gniazdo: caly prostokat naraz. Ma je tylko dostawca, za ktorym stoi prawdziwy model.
+
+    Celowo osobne od `RoofAnalysisProvider`: atrapa umie odpowiedziec na pytanie o jeden budynek
+    (i jest przy tym oznaczona jako atrapa), ale statystyki calego obszaru policzone ze skrotow
+    identyfikatorow wygladalyby jak pomiar, a nie jak demo — wiec ich nie bedzie.
+    """
+
+    async def analyze_area(self, bbox: tuple[float, float, float, float]) -> AreaModelResult: ...
+
+
 class HttpModelProvider:
     """Ocena z zewnetrznego API modelu (`POST /v1/analyze`).
 
@@ -387,12 +538,15 @@ class HttpModelProvider:
         timeout_s: float = 60.0,
         cache_ttl_s: float = 3600.0,
         min_interval_s: float = 6.0,
+        area_timeout_s: float = AREA_TIMEOUT_S,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._token = token
         self.timeout_s = timeout_s
+        # Prostokat z setka budynkow liczy sie dluzej niz jeden dach, wiec ma wlasny, dluzszy limit.
+        self.area_timeout_s = area_timeout_s
         self.cache_ttl_s = cache_ttl_s
         self.min_interval_s = min_interval_s
         self._transport = transport
@@ -466,15 +620,72 @@ class HttpModelProvider:
         self._cache[building.id] = (self._clock() + self.cache_ttl_s, analysis)
         return analysis
 
-    async def _post(self, body: dict[str, Any]) -> httpx.Response:
+    async def analyze_area(self, bbox: tuple[float, float, float, float]) -> AreaModelResult:
+        """Caly zaznaczony prostokat jednym zapytaniem — tym samym, ktorym pyta karta budynku.
+
+        Bez cache'u: prostokat rysuje sie za kazdym razem inny, wiec pamietanie go zajmowaloby
+        pamiec bez pozytku. Za to ogranicznik tempa i blokada „jedno zapytanie naraz" obowiazuja
+        tak samo, bo limit 10 zapytan na minute jest wspolny dla calej instancji — jedno zapytanie
+        o obszar kosztuje dokladnie tyle samo, co jedno o pojedynczy dach.
+
+        Kazda awaria konczy sie `ModelUnavailable` z gotowym komunikatem, nigdy pustym wynikiem:
+        „zero ocenionych budynkow" i „model nie odpowiedzial" to dwie rozne rzeczy.
+        """
+        body = area_request(*bbox)
+        try:
+            response = await self._post(body, timeout=self.area_timeout_s)
+        except httpx.HTTPError as error:
+            raise ModelUnavailable(AREA_SERVICE_DOWN) from error
+
+        if response.status_code == 429:
+            seconds = response.headers.get("Retry-After", "a few")
+            raise ModelUnavailable(AREA_SERVICE_BUSY.format(seconds=seconds))
+        if response.status_code != 200:
+            # Tu wpada takze 413 TOO_MANY_BUILDINGS, gdyby nasza bramka kiedys rozminela sie
+            # z limitem tamtej instancji — wtedy uzytkownik ma zobaczyc odmowe, a nie polowe danych.
+            raise ModelUnavailable(AREA_SERVICE_REFUSED.format(status=response.status_code))
+
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise ModelUnavailable(AREA_SERVICE_DOWN) from error
+        if not isinstance(payload, dict):
+            raise ModelUnavailable(AREA_SERVICE_DOWN)
+
+        result = area_result_from_payload(payload)
+        self._remember(payload, result.model_name)
+        return result
+
+    def _remember(self, payload: dict[str, Any], model_id: str) -> None:
+        """Oceny z odpowiedzi obszarowej trafiaja do tego samego cache, ktorego uzywa karta budynku.
+
+        To ta sama liczba od tego samego modelu z tego samego zdjecia, wiec nic nie falszuje —
+        a klikniecie w budynek zaraz po skanie obszaru nie zjada kolejnego z dziesieciu zapytan
+        na minute, ktore ma cala instancja.
+        """
+        expires_at = self._clock() + self.cache_ttl_s
+        for feature in payload.get("features") or []:
+            if not isinstance(feature, dict):
+                continue
+            properties = feature.get("properties") or {}
+            try:
+                osm_id = int(str(properties.get("source_id")))
+            except (TypeError, ValueError):
+                continue
+            self._cache[osm_id] = (expires_at, analysis_from_properties(properties, model_id))
+
+    async def _post(self, body: dict[str, Any], timeout: float | None = None) -> httpx.Response:
         """Zapytanie pod blokada: rezerwujemy okno, spimy poza nia, dopiero potem pytamy."""
         client = await self.client()
+        # httpx traktuje `timeout=None` jako „czekaj bez konca", wiec brak wartosci znaczy tutaj
+        # „limit klienta", a nie „zaden limit".
+        limit = self.timeout_s if timeout is None else timeout
         async with self._request_lock:
             delay = max(0.0, self._next_allowed_s - self._clock())
             if delay > 0.0:
                 await asyncio.sleep(delay)
             self._next_allowed_s = self._clock() + self.min_interval_s
-            return await client.post(f"{self.base_url}{ANALYZE_PATH}", json=body)
+            return await client.post(f"{self.base_url}{ANALYZE_PATH}", json=body, timeout=limit)
 
 
 # Nazwy z konfiguracji (`prediction_provider`) na klasy dostawcow.
@@ -504,6 +715,7 @@ def build_provider(name: str, settings: Any | None = None) -> RoofAnalysisProvid
             timeout_s=float(getattr(settings, "prediction_timeout_s", 60.0)),
             cache_ttl_s=float(getattr(settings, "prediction_cache_ttl_s", 3600.0)),
             min_interval_s=float(getattr(settings, "prediction_min_interval_s", 6.0)),
+            area_timeout_s=float(getattr(settings, "prediction_area_timeout_s", AREA_TIMEOUT_S)),
         )
     factory = PROVIDERS.get(key)
     if factory is None:
@@ -523,3 +735,14 @@ def get_provider(app: Any) -> RoofAnalysisProvider:
         provider = build_provider(app.state.settings.prediction_provider, app.state.settings)
         app.state.roof_provider = provider
     return provider
+
+
+def get_area_provider(app: Any) -> AreaModelProvider | None:
+    """Dostawca, ktory umie ocenic caly prostokat — albo None, gdy takiego nie ma.
+
+    Atrapa go nie dostanie i nie dostanie go na sile: skan obszaru bez modelu ma powiedziec
+    „nie wiemy" (503), a nie pokazac szesciu statystyk policzonych ze skrotow identyfikatorow.
+    Liczby z tego endpointu maja wygladac na dowod tylko wtedy, gdy stoi za nimi model.
+    """
+    provider = get_provider(app)
+    return provider if isinstance(provider, AreaModelProvider) else None

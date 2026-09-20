@@ -1,5 +1,15 @@
-import { useEffect, useState } from 'react'
-import { fetchAreaLimits, fetchHealth, type Bounds, type Health, type Place } from './api/client'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  fetchAreaLimits,
+  fetchHealth,
+  type AreaAnalysis,
+  type AreaModelLimits,
+  type Bounds,
+  type Health,
+  type Place,
+  type RoofGeometry,
+  type SuspectedRoof,
+} from './api/client'
 import { BasemapSwitcher } from './components/BasemapSwitcher'
 import { BuildingPanel } from './components/BuildingPanel'
 import { Legend } from './components/Legend'
@@ -7,6 +17,7 @@ import { RegistryToggle } from './components/RegistryToggle'
 import { ScanPanel } from './components/ScanPanel'
 import { SearchBox } from './components/SearchBox'
 import { ZoomHint } from './components/ZoomHint'
+import { useAreaAnalysis } from './hooks/useAreaAnalysis'
 import { useAreaScan } from './hooks/useAreaScan'
 import { useBuilding } from './hooks/useBuilding'
 import { MapView, type MapFocus } from './map/MapView'
@@ -28,6 +39,24 @@ function statusLabel(state: BackendState): { text: string; dot: string } {
   if (state.kind === 'unreachable') return { text: `Backend unavailable: ${state.message}`, dot: 'bg-listed' }
   if (state.health.status === 'ok') return { text: `Backend OK · PostGIS ${state.health.postgis}`, dot: 'bg-accent' }
   return { text: `Backend without a database: ${state.health.detail ?? 'no details'}`, dot: 'bg-listed' }
+}
+
+/**
+ * Mapa dostaje tylko te dachy, ktorych ocena siega progu modelu.
+ *
+ * Prog jest wartoscia z odpowiedzi, nie stala w kodzie, a filtruje rodzic, bo to decyzja
+ * interfejsu: liczby w panelu i obrysy na mapie musza pochodzic z tego samego progu, inaczej
+ * „14 niezgloszonych z flaga" nie zgadzaloby sie z tym, co widac pomaranczowego.
+ */
+/** Budynek, ktory da sie narysowac: ocena powyzej progu i obrys od modelu. */
+type DrawableRoof = SuspectedRoof & { geometry: RoofGeometry }
+
+function aboveThreshold(analysis: AreaAnalysis | null): DrawableRoof[] | null {
+  if (analysis === null) return null
+  // Bez obrysu nie ma czego narysowac; w statystykach taki budynek i tak jest policzony.
+  return analysis.buildings.filter(
+    (roof): roof is DrawableRoof => roof.probability >= analysis.stats.threshold && roof.geometry !== null,
+  )
 }
 
 /** Nominatim oddaje bbox jako [south, west, north, east], a mapa chce [west, south, east, north]. */
@@ -60,8 +89,16 @@ export function App() {
    */
   const [scannedArea, setScannedArea] = useState<Bounds | null>(null)
   const [limitKm2, setLimitKm2] = useState<number | null>(null)
+  /** Limity modelu sa twardsze niz limit skanu, wiec panel trzyma je osobno. */
+  const [modelLimits, setModelLimits] = useState<AreaModelLimits | null>(null)
   const selection = useBuilding(selectedId)
   const scan = useAreaScan()
+  /**
+   * Ocena modelu jest drugim krokiem, nie skutkiem skanu: model przyjmuje 100 budynkow i 4 km2,
+   * a liczy kilka sekund, wiec uruchamia ja klikniecie, a nie samo narysowanie prostokata.
+   */
+  const analysis = useAreaAnalysis()
+  const suspectedRoofs = useMemo(() => aboveThreshold(analysis.analysis), [analysis.analysis])
 
   useEffect(() => {
     let current = true
@@ -80,7 +117,13 @@ export function App() {
   useEffect(() => {
     let current = true
     fetchAreaLimits()
-      .then((limits) => current && setLimitKm2(limits.maxAreaKm2))
+      .then((limits) => {
+        if (!current) return
+        setLimitKm2(limits.maxAreaKm2)
+        // Bez limitow modelu nie blokujemy przycisku: wtedy odpowiada sam backend i to jego
+        // tekst zobaczy uzytkownik. Zgadywanie cudzych limitow blokowaloby dzialajace zadania.
+        setModelLimits(limits.model ?? null)
+      })
       .catch(() => undefined)
     return () => {
       current = false
@@ -89,9 +132,14 @@ export function App() {
 
   const status = statusLabel(state)
 
-  /** Wynik i jego obszar sa jednym: zamkniecie panelu zdejmuje takze prostokat z mapy. */
+  /**
+   * Wynik i jego obszar sa jednym: zamkniecie panelu zdejmuje takze prostokat z mapy i ocene
+   * modelu. Zostawiona ocena opisywalaby budynki z poprzedniego zaznaczenia, a jej pomaranczowe
+   * obrysy wisialyby na mapie bez panelu, ktory je tlumaczy.
+   */
   function clearScan() {
     scan.clear()
+    analysis.clear()
     setScannedArea(null)
   }
 
@@ -109,6 +157,11 @@ export function App() {
     // tym bardziej musi widziec, co zaznaczyl, zeby poprawic zaznaczenie.
     setScannedArea(bounds)
     scan.run(bounds)
+  }
+
+  /** Model dostaje dokladnie ten prostokat, ktorego dotycza liczby na ekranie. */
+  function analyseArea() {
+    if (scannedArea !== null) analysis.run(scannedArea)
   }
 
   function handlePickBuilding(id: number) {
@@ -136,6 +189,7 @@ export function App() {
         onDrawCancel={() => setDrawing(false)}
         scannedArea={scannedArea}
         showRegistry={showRegistry}
+        suspectedRoofs={suspectedRoofs}
       />
 
       {/* Warstwa paneli nie przechwytuje przeciagania mapy — klikalne sa tylko same panele. */}
@@ -203,6 +257,11 @@ export function App() {
                   error={scan.error}
                   onClose={clearScan}
                   onPickBuilding={handlePickBuilding}
+                  analysis={analysis.analysis}
+                  analysisLoading={analysis.loading}
+                  analysisError={analysis.error}
+                  onAnalyse={analyseArea}
+                  modelLimits={modelLimits}
                 />
               )}
             </div>

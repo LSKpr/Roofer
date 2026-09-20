@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { AreaScan, ListedBuilding } from '../api/client'
+import type { AreaAnalysis, AreaModelLimits, AreaScan, ListedBuilding } from '../api/client'
 
 type ScanPanelProps = {
   scan: AreaScan | null
@@ -7,6 +7,13 @@ type ScanPanelProps = {
   error: string | null
   onClose: () => void
   onPickBuilding: (id: number) => void
+  /** Wynik modelu dla tego samego prostokata; `null`, dopoki nikt nie zlecil analizy. */
+  analysis: AreaAnalysis | null
+  analysisLoading: boolean
+  analysisError: string | null
+  onAnalyse: () => void
+  /** Limity modelu z backendu; `null`, gdy backend ich nie poda — wtedy nie blokujemy przycisku. */
+  modelLimits: AreaModelLimits | null
 }
 
 const NUMBER_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -57,11 +64,12 @@ function truncationNote(scan: AreaScan): string {
 }
 
 /** Para etykieta/wartosc: mikropodpis po lewej, wartosc po prawej, wiersze rozdziela wlosowa linia. */
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-4 border-t border-hairline py-1.5 first:border-t-0 first:pt-0">
       <dt className="label-micro">{label}</dt>
-      <dd className="text-right text-ink">{value}</dd>
+      {/* Wyciszona wartosc to nazwa modelu: identyfikator do zacytowania, nie liczba do czytania. */}
+      <dd className={`min-w-0 truncate text-right ${muted ? 'text-ink-faint' : 'text-ink'}`}>{value}</dd>
     </div>
   )
 }
@@ -84,6 +92,143 @@ function RegistryNote() {
       roofs. A building missing from the register is not proof that the roof is clean — it only means nobody reported
       it.
     </p>
+  )
+}
+
+/** Jedyna liczba mnoga w sekcji modelu: 1 roof, kazda inna liczba roofs. */
+function roofsLabel(count: number): string {
+  return `${NUMBER_FORMAT.format(count)} ${count === 1 ? 'roof' : 'roofs'}`
+}
+
+/**
+ * Powod, dla ktorego model nie przyjmie tego obszaru — albo `null`, gdy przyjmie.
+ *
+ * Liczba budynkow jest znana z wyniku skanu, a powierzchnia z tego samego wyniku, wiec powod da
+ * sie podac przed kliknieciem. Limity pochodza z backendu: bez nich nie blokujemy przycisku,
+ * bo zgadywanie cudzych limitow konczy sie blokada tam, gdzie zapytanie by przeszlo.
+ */
+function limitReason(scan: AreaScan, limits: AreaModelLimits | null): string | null {
+  if (limits === null) return null
+  if (scan.stats.total > limits.maxBuildings) {
+    const max = NUMBER_FORMAT.format(limits.maxBuildings)
+    return `The model accepts up to ${max} buildings; this area has ${NUMBER_FORMAT.format(scan.stats.total)}.`
+  }
+  if (scan.areaKm2 > limits.maxAreaKm2) {
+    return `The model accepts up to ${km2Label(limits.maxAreaKm2)}; this selection is ${km2Label(scan.areaKm2)}.`
+  }
+  return null
+}
+
+/** Brak oceny to nie jest ocena „nic nie widac" — bez tego zdania zera w tabeli klamia. */
+function noResultNote(count: number): string {
+  return `${roofsLabel(count)} got no score (too little detail, greenery, or no imagery) — that is not the same as a roof the model saw nothing on.`
+}
+
+/**
+ * Zgloszony dach bez flagi modelu jest najlatwiejszy do zlego odczytania: wyglada na odwolanie
+ * zgloszenia. Model nie ma takiej mocy, wiec mowimy to wprost.
+ */
+function listedNotFlaggedNote(count: number): string {
+  const subject = count === 1 ? '1 listed roof was' : `${NUMBER_FORMAT.format(count)} listed roofs were`
+  return `${subject} not flagged by the model. That does not mean the asbestos is gone — the model may not recognise it, or the roof may look different from above.`
+}
+
+/**
+ * Kolor podejrzenia. Ten sam token nosi warstwa modelu na mapie, wiec kropka przy liczbie
+ * prowadzacej i poligon pod nia mowia tym samym kolorem.
+ */
+const SUSPECTED_DOT = 'bg-suspected'
+
+/** Liczby modelu w kolejnosci czytania: najpierw niezgloszone z flaga, potem cala reszta. */
+function ModelNumbers({ analysis }: { analysis: AreaAnalysis }) {
+  const { stats } = analysis
+  return (
+    <div>
+      {/* Liczba prowadzaca calej aplikacji: dachy, ktorych nikt nie zglosil, a model cos na nich widzi. */}
+      <p className="flex items-center gap-2">
+        <span data-testid="suspected-dot" className={`inline-block h-2.5 w-2.5 shrink-0 ${SUSPECTED_DOT}`} />
+        <span data-testid="suspected-not-listed" className="font-display text-4xl leading-none text-ink">
+          {NUMBER_FORMAT.format(stats.suspectedNotListed)}
+        </span>
+      </p>
+      <p className="label-micro mt-1.5">Not in the register, flagged by the model</p>
+
+      <dl className="mt-3">
+        <Row label="Roofs analysed" value={NUMBER_FORMAT.format(stats.analysed)} />
+        <Row label="No result from the model" value={NUMBER_FORMAT.format(stats.noResult)} />
+        <Row
+          label="Flagged by the model"
+          value={`${NUMBER_FORMAT.format(stats.suspected)} (${percentLabel(stats.suspectedShare)})`}
+        />
+        <Row label="Flagged and already listed" value={NUMBER_FORMAT.format(stats.suspectedListed)} />
+        <Row label="Listed but not flagged" value={NUMBER_FORMAT.format(stats.listedNotSuspected)} />
+        <Row label="Roof area flagged" value={areaLabel(stats.suspectedRoofAreaM2)} />
+        {stats.modelName ? <Row label="Model" value={stats.modelName} muted={true} /> : null}
+      </dl>
+
+      {/* Bez tych zdan sekcja klamie: model ocenia wyglad pokrycia na zdjeciu, nie stan prawny dachu. */}
+      <div className="mt-3 space-y-1 text-xs text-ink-faint">
+        <p>Orange marks what the model sees on a photo, not a fact from the register.</p>
+        <p>The model reports 77% accuracy and 63% asbestos recall, so treat a flag as a hint for an inspection.</p>
+        {stats.noResult > 0 ? <p>{noResultNote(stats.noResult)}</p> : null}
+        {stats.listedNotSuspected > 0 ? <p>{listedNotFlaggedNote(stats.listedNotSuspected)}</p> : null}
+        {analysis.truncated ? (
+          <p>The list of roofs is truncated, so the map shows fewer of them than the numbers above count.</p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Ocena modelu dla calego obszaru: osobny krok, nie automat po skanie.
+ *
+ * Model ma twarde limity i liczy kilka sekund, wiec uzytkownik decyduje, czy go uruchomic —
+ * a gdy obszar sie nie miesci, powod stoi przy wylaczonym przycisku, zanim padnie klikniecie.
+ */
+function ModelSection({
+  scan,
+  analysis,
+  loading,
+  error,
+  onAnalyse,
+  modelLimits,
+}: {
+  scan: AreaScan
+  analysis: AreaAnalysis | null
+  loading: boolean
+  error: string | null
+  onAnalyse: () => void
+  modelLimits: AreaModelLimits | null
+}) {
+  const reason = limitReason(scan, modelLimits)
+
+  return (
+    <Section title="Model analysis">
+      {loading ? (
+        // Zadanie trwa kilka sekund; bez tego zdania panel wyglada na zepsuty.
+        <p className="text-ink-muted">Analysing {roofsLabel(scan.stats.total)}…</p>
+      ) : analysis ? (
+        <ModelNumbers analysis={analysis} />
+      ) : (
+        <div>
+          <button
+            type="button"
+            onClick={onAnalyse}
+            disabled={reason !== null}
+            className={
+              reason === null
+                ? 'rounded-card border border-ink bg-ink px-3 py-1.5 text-xs leading-none text-surface hover:opacity-90'
+                : 'rounded-card border border-hairline bg-surface px-3 py-1.5 text-xs leading-none text-ink-faint'
+            }
+          >
+            Analyse roofs with the model
+          </button>
+          {reason ? <p className="mt-2 text-xs text-ink-muted">{reason}</p> : null}
+          {error ? <p className="mt-2 text-listed">{error}</p> : null}
+        </div>
+      )}
+    </Section>
   )
 }
 
@@ -113,7 +258,18 @@ function Shell({ onClose, children }: { onClose: () => void; children: ReactNode
   )
 }
 
-export function ScanPanel({ scan, loading, error, onClose, onPickBuilding }: ScanPanelProps) {
+export function ScanPanel({
+  scan,
+  loading,
+  error,
+  onClose,
+  onPickBuilding,
+  analysis,
+  analysisLoading,
+  analysisError,
+  onAnalyse,
+  modelLimits,
+}: ScanPanelProps) {
   if (loading) {
     return (
       <Shell onClose={onClose}>
@@ -203,6 +359,17 @@ export function ScanPanel({ scan, loading, error, onClose, onPickBuilding }: Sca
       </Section>
 
       <RegistryNote />
+
+      {/* Ocena modelu stoi pod calym rejestrem: to drugi krok i inne zrodlo, wiec nie miesza sie
+          z liczbami zgloszen ani z zastrzezeniem o rejestrze. */}
+      <ModelSection
+        scan={scan}
+        analysis={analysis}
+        loading={analysisLoading}
+        error={analysisError}
+        onAnalyse={onAnalyse}
+        modelLimits={modelLimits}
+      />
     </Shell>
   )
 }

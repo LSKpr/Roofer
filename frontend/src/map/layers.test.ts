@@ -30,6 +30,11 @@ import {
   SOURCE_ID,
   SOURCE_MAX_ZOOM,
   STATUS_COLORS,
+  SUSPECTED_COLOR,
+  SUSPECTED_LAYER_IDS,
+  SUSPECTED_LAYERS,
+  SUSPECTED_LINE_WIDTH,
+  SUSPECTED_SOURCE_ID,
   buildingsFillLayer,
   buildingsOutlineLayer,
   buildingsSource,
@@ -41,7 +46,10 @@ import {
   selectedFillLayer,
   selectedFilter,
   selectedOutlineLayer,
+  suspectedOutlineLayer,
+  suspectedRoofsCollection,
 } from './layers'
+import type { SuspectedRoof } from './layers'
 import { DRAW_LAYER_IDS, DRAW_SOURCE_ID, drawFillLayer, drawOutlineLayer } from './rectangleDraw'
 
 /** Zwraca kanaly RGB i alfe; przyjmuje i `#rrggbb`, i `rgba(r, g, b, a)`, bo rampa ma oba zapisy. */
@@ -331,4 +339,120 @@ it('leaves the map exactly as it looks today when the toggle is on', () => {
   expect(buildingsOutlineLayer.paint?.['line-width']).toEqual(LINE_WIDTH)
   expect(NEUTRAL_FILL_OPACITY).toBe(0.22)
   expect(NEUTRAL_LINE_WIDTH).toBe(0.7)
+})
+
+/** Budynek z modelu; geometria taka, jaka oddaje ja backend — mapa nie ma jej przeliczac. */
+const ROOF: SuspectedRoof = {
+  id: 27469148,
+  probability: 0.81,
+  listed: false,
+  areaM2: 126.6,
+  geometry: {
+    type: 'Polygon',
+    coordinates: [
+      [
+        [21.0701, 51.2501],
+        [21.0709, 51.2501],
+        [21.0709, 51.2507],
+        [21.0701, 51.2507],
+        [21.0701, 51.2501],
+      ],
+    ],
+  },
+}
+
+// Podejrzenie modelu to inna informacja niz wpis w rejestrze, wiec nie moze miec tego samego
+// koloru; zielen jest zakazana z tego samego powodu co przy niezgloszonych budynkach.
+it('paints the suspected roofs orange, far from the registry red and never green', () => {
+  const [red, green, blue] = channels(SUSPECTED_COLOR)
+  expect(SUSPECTED_COLOR).not.toBe(STATUS_COLORS.listed)
+  expect(SUSPECTED_COLOR).not.toBe(STATUS_COLORS.notListed)
+  expect(SUSPECTED_COLOR).not.toBe(SELECTED_COLOR)
+  // Pomarancz: czerwony kanal prowadzi, zielony w srodku, niebieskiego prawie nie ma.
+  expect(green).toBeLessThan(red)
+  expect(blue).toBeLessThan(green)
+  // Roznica wobec czerwieni rejestru musi byc widoczna, a nie tylko formalna — czerwien ma
+  // zielony kanal przy zerze, pomarancz daleko od niego.
+  expect(green - channels(STATUS_COLORS.listed)[1]).toBeGreaterThan(60)
+})
+
+// Obrys, nie wypelnienie: pod spodem musi zostac widoczny kolor rejestru (albo jego brak),
+// bo najciekawszy jest szary budynek w pomaranczowej obwodce.
+it('outlines the suspected roofs instead of filling them', () => {
+  expect(SUSPECTED_LAYERS.map((layer) => layer.type)).toEqual(['line'])
+  expect(SUSPECTED_LAYERS.map((layer) => layer.id)).toEqual(Object.values(SUSPECTED_LAYER_IDS))
+  expect(suspectedOutlineLayer.paint?.['line-color']).toBe(SUSPECTED_COLOR)
+  expect(JSON.stringify(SUSPECTED_LAYERS)).not.toContain('fill')
+  // Zrodlo jest wlasne (GeoJSON z odpowiedzi modelu), wiec warstwa nie ma `source-layer` z kafla.
+  expect(suspectedOutlineLayer.source).toBe(SUSPECTED_SOURCE_ID)
+  expect(suspectedOutlineLayer['source-layer']).toBeUndefined()
+})
+
+// Cienka linia ginelaby na obrysie budynku, na ktorym lezy: obwodka ma byc widoczna od razu,
+// takze na ortofoto.
+it('draws the suspected outline clearly thicker than a building outline', () => {
+  expect(suspectedOutlineLayer.paint?.['line-width']).toBe(SUSPECTED_LINE_WIDTH)
+  expect(SUSPECTED_LINE_WIDTH).toBeGreaterThanOrEqual(2.5)
+  expect(SUSPECTED_LINE_WIDTH).toBeLessThanOrEqual(3)
+  // 1,2 px ma obrys zgloszonego budynku, 0,7 px pozostale — patrz LINE_WIDTH.
+  expect(SUSPECTED_LINE_WIDTH).toBeGreaterThan(Number(LINE_WIDTH[2]))
+  expect(SUSPECTED_LINE_WIDTH).toBeGreaterThan(NEUTRAL_LINE_WIDTH)
+})
+
+// Czwarta rodzina warstw na tej samej mapie. Wspolny identyfikator znaczylby, ze jedna po cichu
+// nadpisuje druga — a wynik modelu potrafi stac na mapie razem z prostokatem skanu.
+it('keeps the suspected ids disjoint from the tiles, the draw preview and the scanned area', () => {
+  for (const id of [...Object.values(SUSPECTED_LAYER_IDS), SUSPECTED_SOURCE_ID]) {
+    expect(Object.values(LAYER_IDS)).not.toContain(id)
+    expect(Object.values(DRAW_LAYER_IDS)).not.toContain(id)
+    expect(Object.values(SCAN_AREA_LAYER_IDS)).not.toContain(id)
+    expect(id).not.toBe(SOURCE_ID)
+    expect(id).not.toBe(DRAW_SOURCE_ID)
+    expect(id).not.toBe(SCAN_AREA_SOURCE_ID)
+  }
+  // Wynik modelu nie jest dana z kafla, wiec nie wchodzi miedzy warstwy budynkow.
+  expect(MAP_LAYERS.map((layer) => layer.id)).not.toContain(SUSPECTED_LAYER_IDS.outline)
+})
+
+// Test-straznik: obrys lezy dokladnie na budynku, wiec klikalny przejmowalby klikniecia.
+// Karta budynku — z pelna ocena i nota modelu — otwiera sie z warstwy wypelnienia.
+it('never makes the suspected outline clickable', () => {
+  expect(CLICKABLE_LAYER_IDS).not.toContain(SUSPECTED_LAYER_IDS.outline)
+  expect(CLICKABLE_LAYER_IDS).toEqual([LAYER_IDS.fill])
+  expect(HIGHLIGHT_LAYER_IDS).not.toContain(SUSPECTED_LAYER_IDS.outline)
+})
+
+// Geometrie liczy model, nie mapa: ten sam obiekt ma trafic do zrodla, bez kopiowania
+// i bez przeliczania wspolrzednych.
+it('passes the model geometry into the collection untouched', () => {
+  const collection = suspectedRoofsCollection([ROOF])
+
+  expect(collection.type).toBe('FeatureCollection')
+  expect(collection.features).toHaveLength(1)
+  expect(collection.features[0].geometry).toBe(ROOF.geometry)
+  expect(collection.features[0].id).toBe(ROOF.id)
+  expect(collection.features[0].properties).toEqual({ probability: ROOF.probability })
+})
+
+it('carries a multipolygon through exactly as it arrived', () => {
+  const geometry: SuspectedRoof['geometry'] = {
+    type: 'MultiPolygon',
+    coordinates: [[[[21.07, 51.25]]], [[[21.08, 51.26]]]],
+  }
+  const collection = suspectedRoofsCollection([{ ...ROOF, geometry }])
+
+  expect(collection.features[0].geometry).toBe(geometry)
+  expect(collection.features[0].geometry.type).toBe('MultiPolygon')
+})
+
+// „Model nic nie znalazl" to poprawna odpowiedz, a nie blad: kolekcja ma byc pusta, nie zepsuta.
+it('turns an empty list into an empty collection', () => {
+  expect(suspectedRoofsCollection([])).toEqual({ type: 'FeatureCollection', features: [] })
+})
+
+it('keeps one feature per roof, in the order the model gave them', () => {
+  const second: SuspectedRoof = { ...ROOF, id: 28287777, probability: 0.52 }
+  const collection = suspectedRoofsCollection([ROOF, second])
+
+  expect(collection.features.map((feature) => feature.id)).toEqual([ROOF.id, second.id])
 })

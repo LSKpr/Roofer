@@ -237,7 +237,9 @@ def test_limits_endpoint_publishes_the_same_constant_that_guards_the_scan() -> N
         response = client.get("/api/area/limits")
 
     assert response.status_code == 200
-    assert response.json() == {"maxAreaKm2": MAX_AREA_KM2}
+    # Obok doszedl limit modelu (`model`, pilnuje go tests/test_area_analysis.py); tutaj liczy sie
+    # to, ze stare pole zostalo nietkniete — front, ktory czyta tylko je, ma dzialac dalej.
+    assert response.json()["maxAreaKm2"] == MAX_AREA_KM2
 
 
 def test_a_dead_database_degrades_to_503() -> None:

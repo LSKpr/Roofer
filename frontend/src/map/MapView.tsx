@@ -13,13 +13,20 @@ import {
   SCAN_AREA_LAYERS,
   SCAN_AREA_SOURCE_ID,
   SOURCE_ID,
+  SUSPECTED_LAYERS,
+  SUSPECTED_SOURCE_ID,
   buildingsSource,
   fillColor,
   fillOpacity,
   lineWidth,
   outlineColor,
   selectedFilter,
+  suspectedRoofsCollection,
 } from './layers'
+import type { SuspectedRoof } from './layers'
+
+/** Kontrakt z backendem i z `App.tsx` mieszka w layers.ts; tutaj tylko go przepuszczamy dalej. */
+export type { SuspectedRoof } from './layers'
 
 /**
  * Cel kamery. Wyszukiwarka oddaje albo prostokat miejscowosci, albo sam punkt (adres, przysiolek),
@@ -54,6 +61,12 @@ export type MapViewProps = {
    * czerwien i chowa cieplo, ale nie rusza samych warstw budynkow (patrz `applyRegistry`).
    */
   showRegistry?: boolean
+  /**
+   * Budynki, na ktorych model widzi pokrycie typu eternit. Mapa rysuje dokladnie to, co dostanie:
+   * progowanie po `probability` nalezy do rodzica, bo prog jest decyzja interfejsu, a nie mapy.
+   * `null` znaczy „nie ma czego pokazywac" i zdejmuje warstwe; pusta lista zostawia ja bez obiektow.
+   */
+  suspectedRoofs?: SuspectedRoof[] | null
 }
 
 /** Filtr ustawiamy tylko na warstwach, ktore juz istnieja — powstaja dopiero po `style.load`. */
@@ -130,6 +143,38 @@ function applyScannedArea(instance: MapLibreMap, area: Bounds | null) {
   }
 }
 
+/**
+ * Obrysy budynkow, na ktorych model widzi eternit. Warstwa wchodzi PRZED podswietleniem wyboru,
+ * a wiec nad budynkami i pod wybranym budynkiem: pomaranczowy obrys ma byc widoczny razem
+ * z kolorem rejestru pod spodem, ale nie moze przykrywac tego, co uzytkownik wlasnie kliknal.
+ *
+ * Wywolanie jest odporne na powtorzenie z tego samego powodu co przy prostokacie skanu: po
+ * `setStyle` mapa jest pusta i wszystko trzeba dolozyc od nowa.
+ */
+function applySuspectedRoofs(instance: MapLibreMap, roofs: SuspectedRoof[] | null) {
+  if (!roofs) {
+    // Najpierw warstwy, potem zrodlo: MapLibre nie usunie zrodla, z ktorego ktos jeszcze czyta.
+    for (const layer of SUSPECTED_LAYERS) {
+      if (instance.getLayer(layer.id)) instance.removeLayer(layer.id)
+    }
+    if (instance.getSource(SUSPECTED_SOURCE_ID)) instance.removeSource(SUSPECTED_SOURCE_ID)
+    return
+  }
+  const data = suspectedRoofsCollection(roofs)
+  const source = instance.getSource<GeoJSONSource>(SUSPECTED_SOURCE_ID)
+  // Istniejacemu zrodlu podmieniamy dane: usuwanie go przy kazdym nowym wyniku zabieraloby
+  // ze soba warstwe i mrugaloby obrysami.
+  if (source) source.setData(data)
+  else instance.addSource(SUSPECTED_SOURCE_ID, { type: 'geojson', data })
+  // Miejsce w stosie okresla `beforeId`, a nie moment wywolania. Gdy podswietlenia jeszcze nie ma
+  // (MapLibre rzuca na nieistniejacym `beforeId`), warstwa wyladuje na wierzchu i wroci na swoje
+  // miejsce przy najblizszym `style.load`, ktory doklada wszystko w komplecie.
+  const before = HIGHLIGHT_LAYER_IDS.find((layerId) => instance.getLayer(layerId))
+  for (const layer of SUSPECTED_LAYERS) {
+    if (!instance.getLayer(layer.id)) instance.addLayer(layer, before)
+  }
+}
+
 export function MapView({
   selectedId = null,
   onSelect,
@@ -141,6 +186,7 @@ export function MapView({
   onDrawCancel,
   scannedArea = null,
   showRegistry = true,
+  suspectedRoofs = null,
 }: MapViewProps) {
   const container = useRef<HTMLDivElement | null>(null)
   const map = useRef<MapLibreMap | null>(null)
@@ -153,6 +199,7 @@ export function MapView({
   const drawCancelRef = useRef(onDrawCancel)
   const scannedAreaRef = useRef(scannedArea)
   const showRegistryRef = useRef(showRegistry)
+  const suspectedRoofsRef = useRef(suspectedRoofs)
   const draw = useRef<RectangleDraw | null>(null)
   const styleReady = useRef(false)
   // Styl, ktory mapa juz dostala. Pierwszy dostaje przez konstruktor, wiec `setStyle` na starcie
@@ -168,6 +215,7 @@ export function MapView({
     drawCancelRef.current = onDrawCancel
     scannedAreaRef.current = scannedArea
     showRegistryRef.current = showRegistry
+    suspectedRoofsRef.current = suspectedRoofs
   })
 
   useEffect(() => {
@@ -196,6 +244,9 @@ export function MapView({
       // Po warstwach budynkow, zeby prostokat zostal nad obrysami. Wynik skanu nie znika przez
       // to, ze uzytkownik przelaczyl podklad, wiec jego obszar tez ma wrocic na mape.
       applyScannedArea(instance, scannedAreaRef.current)
+      // Wynik modelu przezywa zmiane podkladu tak samo jak wynik skanu, a o miejsce w stosie
+      // dba `beforeId` — dlatego wolno go dolozyc na koncu, po podswietleniu.
+      applySuspectedRoofs(instance, suspectedRoofsRef.current)
 
       // Handlery kursora zostaja przy mapie, nie przy stylu, wiec rejestrujemy je tylko raz —
       // po drugim `style.load` mielibysmy inaczej dwa zestawy tych samych nasluchow.
@@ -316,6 +367,16 @@ export function MapView({
     if (!instance || !styleReady.current) return
     applyScannedArea(instance, scannedArea)
   }, [scannedArea])
+
+  /**
+   * To samo dla wyniku modelu: mapa odwzorowuje prop, a stan sprzed `style.load` nadrabia handler
+   * stylu. Nowa lista podmienia dane w istniejacym zrodle, `null` zdejmuje warstwe z mapy.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady.current) return
+    applySuspectedRoofs(instance, suspectedRoofs)
+  }, [suspectedRoofs])
 
   return <div ref={container} data-testid="map" className="h-full w-full" />
 }

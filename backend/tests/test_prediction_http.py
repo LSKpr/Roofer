@@ -16,11 +16,16 @@ from app.config import Settings
 from app.prediction import (
     ANALYZE_PATH,
     SUSPECTED_THRESHOLD,
+    AreaModelProvider,
     BuildingShape,
     HttpModelProvider,
+    MockProvider,
+    ModelUnavailable,
     UnavailableProvider,
     analysis_from_properties,
     analyze_request,
+    area_request,
+    area_result_from_payload,
     build_provider,
     find_feature,
 )
@@ -277,6 +282,151 @@ async def test_requests_are_serialised_because_the_service_takes_one_at_a_time()
     await provider.close()
 
     assert running["max"] == 1
+
+
+# --- caly prostokat naraz (skan obszaru) ---------------------------------------------------------
+#
+# To samo API i ta sama sciezka, tylko bbox jest wiekszy niz jeden dach: zamiast szukac naszego
+# budynku wsrod sasiadow, bierzemy wszystkie obiekty z odpowiedzi.
+
+AREA = (21.5745, 51.3555, 21.578, 51.358)  # prostokat pod Zwoleniem: 74 budynki, miesci sie w limicie
+
+POLYGON = {"type": "Polygon", "coordinates": [[[21.5745, 51.3555], [21.5746, 51.3555], [21.5746, 51.3556]]]}
+
+
+def test_the_area_request_body_has_the_corners_of_the_whole_rectangle() -> None:
+    assert area_request(*AREA) == {
+        "south_west": {"longitude": 21.5745, "latitude": 51.3555},
+        "north_east": {"longitude": 21.578, "latitude": 51.358},
+    }
+
+
+def test_the_building_request_is_the_same_body_for_its_own_bbox() -> None:
+    """Jedno cialo zapytania dla karty i dla obszaru — API modelu zna tylko prostokat."""
+    assert analyze_request(BUILDING) == area_request(*BUILDING.bbox)
+
+
+def test_the_answer_becomes_buildings_with_their_scores_and_geometry() -> None:
+    payload = collection(
+        {
+            "type": "Feature",
+            "geometry": POLYGON,
+            "properties": {"source_id": str(OSM_ID), "status": "ok", "asbestos_probability": 0.7239},
+        },
+        feature(381012561, status="low_quality", probability=None),
+    )
+
+    result = area_result_from_payload(payload)
+
+    assert result.model_name == MODEL_ID
+    scored, unscored = result.buildings
+    assert (scored.osm_id, scored.probability, scored.scored) == (OSM_ID, 0.7239, True)
+    assert scored.geometry == POLYGON  # obrys przepuszczamy bez przeliczania
+    assert (unscored.status, unscored.probability, unscored.scored) == ("low_quality", None, False)
+
+
+def test_a_score_outside_the_range_is_not_a_score() -> None:
+    """Liczby, ktorej nie umiemy nazwac prawdopodobienstwem, nie wolno wpuscic do statystyk."""
+    result = area_result_from_payload(collection(feature(OSM_ID, probability=1.4)))
+
+    assert result.buildings[0].scored is False
+
+
+def test_a_feature_without_a_source_id_is_skipped_instead_of_guessed() -> None:
+    result = area_result_from_payload(collection(feature("not-a-number"), feature(OSM_ID)))
+
+    assert [building.osm_id for building in result.buildings] == [OSM_ID]
+
+
+def test_a_repeated_building_is_counted_once() -> None:
+    """Duplikat podwoilby budynek w kazdym liczniku, a liczniki sa cala trescia skanu obszaru."""
+    result = area_result_from_payload(collection(feature(OSM_ID), feature(OSM_ID, probability=0.1)))
+
+    assert [building.probability for building in result.buildings] == [0.72]
+
+
+def test_an_answer_without_a_model_id_is_refused_instead_of_shown() -> None:
+    with pytest.raises(ModelUnavailable, match="which model"):
+        area_result_from_payload(collection(feature(OSM_ID), model_id=None))
+
+
+async def test_the_whole_rectangle_goes_out_in_one_request_with_its_own_timeout() -> None:
+    seen, handle = responder(collection(feature(OSM_ID)))
+    provider = provider_with(handle, area_timeout_s=200.0)
+
+    result = await provider.analyze_area(AREA)
+    await provider.close()
+
+    assert len(seen) == 1
+    assert seen[0].url.path == ANALYZE_PATH
+    assert seen[0].extensions["timeout"]["read"] == 200.0  # setka budynkow liczy sie dluzej niz jeden dach
+    assert len(result.buildings) == 1
+
+
+async def test_the_scores_from_an_area_answer_serve_the_building_card_too() -> None:
+    """Ta sama liczba od tego samego modelu, wiec cache niczego nie falszuje — a klikniecie
+    w budynek zaraz po skanie nie zjada kolejnego z dziesieciu zapytan na minute."""
+    seen, handle = responder(collection(feature(OSM_ID, probability=0.24)))
+    provider = provider_with(handle)
+
+    await provider.analyze_area(AREA)
+    analysis = await provider.analyze(BUILDING)
+    await provider.close()
+
+    assert len(seen) == 1  # drugie pytanie nie dotarlo do sieci
+    assert (analysis.source, analysis.probability, analysis.model_name) == ("model", 0.24, MODEL_ID)
+
+
+async def test_a_dead_service_raises_instead_of_returning_an_empty_area() -> None:
+    """„Zero ocenionych budynkow" i „model nie odpowiedzial" to dwie rozne rzeczy i nie wolno
+    ich pomylic: pusty wynik wygladalby jak czysty obszar."""
+
+    def explode(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    provider = provider_with(explode)
+
+    with pytest.raises(ModelUnavailable, match="did not answer"):
+        await provider.analyze_area(AREA)
+    await provider.close()
+
+
+async def test_a_busy_service_carries_the_pause_from_the_header() -> None:
+    _seen, handle = responder({"detail": {"code": "BUSY"}}, status_code=429, headers={"Retry-After": "30"})
+    provider = provider_with(handle)
+
+    with pytest.raises(ModelUnavailable, match="30"):
+        await provider.analyze_area(AREA)
+    await provider.close()
+
+
+@pytest.mark.parametrize("status_code", [401, 413, 500])
+async def test_every_refusal_carries_its_status_code(status_code: int) -> None:
+    _seen, handle = responder({"detail": {"code": "TOO_MANY_BUILDINGS"}}, status_code=status_code)
+    provider = provider_with(handle)
+
+    with pytest.raises(ModelUnavailable, match=str(status_code)):
+        await provider.analyze_area(AREA)
+    await provider.close()
+
+
+async def test_a_broken_json_is_a_refusal_too() -> None:
+    def broken(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>nie json</html>")
+
+    provider = provider_with(broken)
+
+    with pytest.raises(ModelUnavailable):
+        await provider.analyze_area(AREA)
+    await provider.close()
+
+
+def test_only_the_http_provider_can_analyse_an_area() -> None:
+    """Atrapa umie ocenic jeden dach i jest przy tym oznaczona jako atrapa; szesc statystyk
+    obszaru policzonych ze skrotow identyfikatorow wygladaloby juz jak pomiar."""
+    assert isinstance(provider_with(lambda request: httpx.Response(200, json={})), AreaModelProvider)
+    assert not isinstance(MockProvider(), AreaModelProvider)
+    assert not isinstance(UnavailableProvider(), AreaModelProvider)
 
 
 def settings_for(url: str = "", token: str = "") -> Settings:

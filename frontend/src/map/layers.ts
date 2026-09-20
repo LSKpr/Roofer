@@ -56,6 +56,14 @@ export const STATUS_COLORS = {
 export const SELECTED_COLOR = '#2251ff'
 
 /**
+ * Ten sam hex co token `--color-suspected` w index.css. Pomaranczowy, bo model to domysl ze
+ * zdjecia, a nie wpis w rejestrze: czerwien `STATUS_COLORS.listed` niesie fakt („ktos zglosil"),
+ * wiec podejrzenie nie moze jej udawac. Zielen odpada z tego samego powodu co przy niezgloszonych
+ * — znaczylaby „sprawdzone i czyste", czego z oceny modelu nie wiemy.
+ */
+export const SUSPECTED_COLOR = '#ed8b00'
+
+/**
  * Prog nasycenia wagi heatmapy: od tylu zgloszen w jednej komorce cieplo juz nie rosnie.
  *
  * Skad 40. Backend tnie kazdy kafel na 64×64 komorki (`DENSITY_GRID` w `app/tiles.py`), wiec
@@ -369,3 +377,99 @@ export const scanAreaOutlineLayer: LineLayerSpecification = {
 
 /** Kolejnosc dodawania: wypelnienie pod obrysem, oba nad warstwami budynkow. */
 export const SCAN_AREA_LAYERS: LayerSpecification[] = [scanAreaFillLayer, scanAreaOutlineLayer]
+
+/**
+ * Budynki, na ktorych model widzi pokrycie typu eternit. Zrodlo jest wlasne (GeoJSON z odpowiedzi
+ * modelu, nie kafel), a identyfikatory rozlaczne z `LAYER_IDS`, `DRAW_LAYER_IDS`
+ * i `SCAN_AREA_LAYER_IDS`: wszystkie cztery rodziny warstw potrafia stac na jednej mapie naraz.
+ */
+export const SUSPECTED_SOURCE_ID = 'roofer-suspected'
+
+export const SUSPECTED_LAYER_IDS = {
+  outline: 'roofer-suspected-outline',
+}
+
+/**
+ * Obrys, a nie wypelnienie, i to jest cala tresc tej warstwy. Czerwone wypelnienie znaczy „jest
+ * w rejestrze" (fakt), pomaranczowy obrys — „model cos widzi" (domysl ze zdjecia). Oba musza dac
+ * sie odczytac na tym samym budynku, bo najciekawszy jest przypadek szarego wypelnienia
+ * z pomaranczowym obrysem: nikt tego nie zglosil, a model widzi eternit. Wypelnienie zakryloby
+ * ten pierwszy kolor i skasowalo roznice miedzy zgloszonym a niezgloszonym podejrzanym dachem.
+ */
+export const SUSPECTED_LINE_WIDTH = 2.75
+
+export const suspectedOutlineLayer: LineLayerSpecification = {
+  id: SUSPECTED_LAYER_IDS.outline,
+  type: 'line',
+  source: SUSPECTED_SOURCE_ID,
+  paint: {
+    'line-color': SUSPECTED_COLOR,
+    'line-width': SUSPECTED_LINE_WIDTH,
+  },
+}
+
+/** Jedna warstwa, ale lista jak przy pozostalych rodzinach: dokladanie i sprzatanie ma jeden ksztalt. */
+export const SUSPECTED_LAYERS: LayerSpecification[] = [suspectedOutlineLayer]
+
+/**
+ * Geometria budynku tak, jak oddal ja backend. `coordinates` zostaje nieprzejrzane, bo jedynym
+ * jego odbiorca jest MapLibre — przeliczanie czegokolwiek tutaj mogloby tylko rozjechac obrys
+ * z tym, co policzyl model.
+ */
+export type SuspectedRoofGeometry = { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown }
+
+/**
+ * Budynek wskazany przez model. Kontrakt jest wspolny z backendem i z `App.tsx`: mapa rysuje
+ * dokladnie to, co dostanie, a progowanie po `probability` robi rodzic.
+ */
+export type SuspectedRoof = {
+  /** `osm_id` — ten sam identyfikator, ktorym posluguje sie karta budynku. */
+  id: number
+  probability: number
+  listed: boolean
+  areaM2: number
+  geometry: SuspectedRoofGeometry
+}
+
+/**
+ * Pozycja GeoJSON, powtorzona za rectangleDraw.ts: `@types/geojson` nie rozwiazuje sie w tym
+ * projekcie (patrz komentarz tam), a import typu z powrotem robilby cykl miedzy modulami.
+ */
+type Position = [number, number]
+
+/** Tyle geometrii, ile typy MapLibre musza zobaczyc, zeby przyjac nasze zrodlo. */
+type DrawableGeometry =
+  | { type: 'Polygon'; coordinates: Position[][] }
+  | { type: 'MultiPolygon'; coordinates: Position[][][] }
+
+export type SuspectedRoofFeature = {
+  type: 'Feature'
+  id: number
+  properties: { probability: number }
+  geometry: DrawableGeometry
+}
+
+export type SuspectedRoofCollection = {
+  type: 'FeatureCollection'
+  features: SuspectedRoofFeature[]
+}
+
+/**
+ * Lista z modelu w zrodlo GeoJSON. Geometria idzie dalej tym samym obiektem — jedyne, co sie
+ * zmienia, to typ: rzutowanie stoi tu raz i tylko po to, zeby MapLibre przyjelo `coordinates`,
+ * ktorych ten modul swiadomie nie oglada.
+ *
+ * Ocena wchodzi we wlasciwosci obiektu, mimo ze dzis nie steruje malowaniem: bez niej obrys na
+ * mapie nie dalby sie zestawic z lista w panelu ani obejrzec w inspektorze.
+ */
+export function suspectedRoofsCollection(roofs: SuspectedRoof[]): SuspectedRoofCollection {
+  return {
+    type: 'FeatureCollection',
+    features: roofs.map((roof) => ({
+      type: 'Feature',
+      id: roof.id,
+      properties: { probability: roof.probability },
+      geometry: roof.geometry as DrawableGeometry,
+    })),
+  }
+}

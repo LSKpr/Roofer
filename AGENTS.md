@@ -166,6 +166,34 @@ W interfejsie atrapa ma nad werdyktem napis „Wynik demonstracyjny · model nie
 liczbę; drugi test pilnuje, że przy `source: "model"` tego ostrzeżenia **nie ma** — inaczej prawdziwy
 wynik wyglądałby na podrobiony.
 
+### Analiza całego zaznaczonego obszaru
+
+`POST /api/area/analyze` przepuszcza prostokąt przez model jednym żądaniem i zestawia jego ocenę
+z naszym rejestrem. Liczba prowadząca to **`suspectedNotListed`**: budynki, których nikt nie
+zgłosił, a model widzi na nich pokrycie typu eternit. Na żywo pod Zwoleniem (76 budynków, 2,3 s):
+66 ocenionych, 10 bez oceny, 17 z flagą, **14 niezgłoszonych z flagą**.
+
+Trzy zasady liczenia, każda pilnowana testem:
+
+- **mianownikiem udziału jest `analysed`, nigdy `analysed + noResult`** — dach bez oceny jest
+  nieznany, a nie czysty, i doliczenie go zaniżałoby wynik akurat tam, gdzie zdjęcie było najgorsze;
+- **budynek zgłoszony, którego model nie ocenił, nie liczy się jako „model nic nie widzi"**;
+- **budynek, którego nie ma w naszej bazie, nie wchodzi do żadnego licznika** i jest widoczny jako
+  `unknownToUs`. Wcześniej dostawał `listed=false` i lądował w liczbie prowadzącej — a „nie ma go
+  u nas" nie znaczy „nikt go nie zgłosił". Przy wspólnym snapshocie OSM to zawsze zero; niezerowe
+  znaczy, że snapshoty się rozjechały, i właśnie dlatego jest widoczne, a nie połknięte.
+
+Limity modelu (100 budynków, 4 km²) sprawdzamy **po naszej stronie, zanim cokolwiek wyślemy**:
+liczbę budynków znamy z własnej bazy, więc 400 z konkretną liczbą przychodzi w 8–44 ms zamiast po
+kilku sekundach czekania na cudze 413. Limity wystawia `GET /api/area/limits` w polu `model`, żeby
+front ich nie zgadywał.
+
+Na mapie: **pomarańczowy obrys** (`--color-suspected`, `#ed8b00`) nad warstwami budynków, pod
+podświetleniem wyboru. Obrys, nie wypełnienie — czerwone wypełnienie znaczy „jest w rejestrze"
+(fakt), pomarańczowy obrys „model coś widzi" (domysł ze zdjęcia). Dzięki temu widać jedno i drugie
+naraz, a przypadek szarego wypełnienia z pomarańczowym obrysem to dokładnie ten, po który sięga
+urzędnik. Warstwa nie jest klikalna: klik ma trafiać w budynek i otwierać jego kartę.
+
 ### Prawdziwy model jest podłączony (2026-09-20)
 
 `PREDICTION_PROVIDER=model` woła `POST {PREDICTION_API_URL}/v1/analyze` z tokenem Bearer. Sprawdzone

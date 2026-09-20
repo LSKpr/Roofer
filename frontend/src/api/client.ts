@@ -113,11 +113,21 @@ export type AreaScan = {
   areaKm2: number
 }
 
+/**
+ * Limity modelu sa twardsze niz limit skanu: tamten serwis odrzuca zadania powyzej 100 budynkow
+ * i 4 km2. Front pokazuje te liczby w powodzie zablokowanego przycisku, wiec musi je znac przed
+ * kliknieciem — ale nie trzyma ich wlasnej kopii.
+ */
+export type AreaModelLimits = { maxBuildings: number; maxAreaKm2: number }
+
+/** `model` jest opcjonalny: backend bez analizy obszaru oddaje sam limit zaznaczenia. */
+export type AreaLimits = { maxAreaKm2: number; model?: AreaModelLimits }
+
 /** Limit powierzchni zaznaczenia. Front pyta backend, zamiast trzymac wlasna kopie tej liczby. */
-export async function fetchAreaLimits(baseUrl: string = API_BASE_URL): Promise<{ maxAreaKm2: number }> {
+export async function fetchAreaLimits(baseUrl: string = API_BASE_URL): Promise<AreaLimits> {
   const response = await fetch(`${baseUrl}/api/area/limits`)
   if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
-  return (await response.json()) as { maxAreaKm2: number }
+  return (await response.json()) as AreaLimits
 }
 
 /**
@@ -136,6 +146,79 @@ export async function fetchAreaScan(bounds: Bounds, baseUrl: string = API_BASE_U
   }
   if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
   return (await response.json()) as AreaScan
+}
+
+/**
+ * Obrys dachu tak, jak oddal go backend. Ksztalt jest zgodny z GeoJSON-em, wiec mapa bierze go
+ * wprost; `MultiPolygon` jest tu, bo budynek z dziura albo z dwoma czesciami przyjdzie wlasnie tak.
+ */
+export type RoofGeometry =
+  | { type: 'Polygon'; coordinates: number[][][] }
+  | { type: 'MultiPolygon'; coordinates: number[][][][] }
+
+/**
+ * Budynek z ocena modelu. `probability` jest zawsze liczba 0–1 — budynki bez oceny nie trafiaja
+ * do tej listy, liczy je `noResult`. `listed` mowi o rejestrze, nie o modelu.
+ */
+export type SuspectedRoof = {
+  id: number
+  probability: number
+  listed: boolean
+  areaM2: number
+  /**
+   * Obrys od modelu. `null` jest tu mozliwe, bo geometria pochodzi z cudzej odpowiedzi — budynek
+   * bez obrysu liczy sie do statystyk, ale nie da sie go narysowac, wiec mapa go nie dostaje.
+   */
+  geometry: RoofGeometry | null
+}
+
+/**
+ * Wynik modelu dla calego obszaru.
+ *
+ * `suspectedNotListed` jest tu najwazniejsza liczba: budynki, ktorych nikt nie zglosil, a model
+ * widzi na nich pokrycie typu eternit. `noResult` to osobny stan — brak oceny nie jest ocena
+ * „nic nie widac". `threshold` jest progiem, powyzej ktorego ocena liczy sie jako podejrzenie.
+ */
+export type AreaAnalysisStats = {
+  analysed: number
+  noResult: number
+  suspected: number
+  /** Udzial podejrzanych wsrod ocenionych: 0–1. */
+  suspectedShare: number
+  suspectedNotListed: number
+  suspectedListed: number
+  listedNotSuspected: number
+  suspectedRoofAreaM2: number
+  threshold: number
+  modelName: string
+}
+
+export type AreaAnalysis = {
+  stats: AreaAnalysisStats
+  buildings: SuspectedRoof[]
+  /** true, gdy ocenionych bylo wiecej, niz backend oddaje w liscie. */
+  truncated: boolean
+}
+
+/**
+ * Ocena modelu dla zaznaczonego prostokata. Osobne zadanie od skanu, bo model ma twarde limity
+ * (100 budynkow, 4 km2 — patrz /api/area/limits) i liczy kilka sekund.
+ *
+ * Przy 400 i 503 backend tlumaczy w `detail`, co jest nie tak; ten tekst jest gotowy do pokazania
+ * uzytkownikowi i nie przerabiamy go.
+ */
+export async function fetchAreaAnalysis(bounds: Bounds, baseUrl: string = API_BASE_URL): Promise<AreaAnalysis> {
+  const response = await fetch(`${baseUrl}/api/area/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bounds),
+  })
+  if (response.status === 400 || response.status === 503) {
+    const body = (await response.json()) as { detail?: string }
+    throw new Error(body.detail ?? 'Could not analyse the area.')
+  }
+  if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
+  return (await response.json()) as AreaAnalysis
 }
 
 /** Miejsce z wyszukiwarki. `bbox` jest w kolejnosci [south, west, north, east]. */
