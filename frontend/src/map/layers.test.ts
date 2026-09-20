@@ -3,6 +3,12 @@ import { TILES_URL } from '../api/client'
 import {
   CLICKABLE_LAYER_IDS,
   DENSITY_COUNT_PROPERTY,
+  FILL_OPACITY,
+  LINE_WIDTH,
+  NEUTRAL_FILL_OPACITY,
+  NEUTRAL_LINE_WIDTH,
+  fillOpacity,
+  lineWidth,
   DENSITY_MAX_ZOOM,
   DENSITY_SOURCE_LAYER,
   HEATMAP_MIN_WEIGHT,
@@ -27,7 +33,9 @@ import {
   buildingsFillLayer,
   buildingsOutlineLayer,
   buildingsSource,
+  fillColor,
   listedDensityLayer,
+  outlineColor,
   scanAreaFillLayer,
   scanAreaOutlineLayer,
   selectedFillLayer,
@@ -67,6 +75,31 @@ it('colours buildings by the listed attribute using both status colours', () => 
     STATUS_COLORS.notListed,
   ])
   expect(STATUS_COLORS.listed).not.toBe(STATUS_COLORS.notListed)
+})
+
+// Przelacznik rejestru: wlaczony ma dawac dokladnie dzisiejsza mape, wiec warstwa i funkcja
+// koloru musza byc jednym zrodlem prawdy. Dwie kopie wyrazenia rozjechalyby sie przy pierwszej
+// zmianie palety.
+it('builds the layer colours from the same function the toggle uses', () => {
+  expect(buildingsFillLayer.paint?.['fill-color']).toEqual(fillColor(true))
+  expect(buildingsOutlineLayer.paint?.['line-color']).toEqual(outlineColor(true))
+})
+
+it('keeps the listed case expression while the registry highlight is on', () => {
+  const expression = ['case', ['get', 'listed'], STATUS_COLORS.listed, STATUS_COLORS.notListed]
+  expect(fillColor(true)).toEqual(expression)
+  expect(outlineColor(true)).toEqual(expression)
+})
+
+// Wylaczony przelacznik ma zdjac czerwien, a nie ja wyszarzyc: dopoki w kolorze siedzi
+// `['get', 'listed']`, mapa dalej czyta rejestr i kazda zmiana palety przywroci roznice.
+it('drops every reference to the listed attribute when the registry highlight is off', () => {
+  expect(fillColor(false)).toBe(STATUS_COLORS.notListed)
+  expect(outlineColor(false)).toBe(STATUS_COLORS.notListed)
+  expect(JSON.stringify(fillColor(false))).not.toContain('listed')
+  expect(JSON.stringify(outlineColor(false))).not.toContain('listed')
+  expect(JSON.stringify(fillColor(false))).not.toContain('case')
+  expect(JSON.stringify(fillColor(false))).not.toContain(STATUS_COLORS.listed)
 })
 
 it('never paints unlisted buildings green', () => {
@@ -277,4 +310,25 @@ it('highlights only where the outlines are', () => {
   expect(selectedOutlineLayer.minzoom).toBe(POLYGON_MIN_ZOOM)
   expect(selectedFillLayer['source-layer']).toBe(POLYGON_SOURCE_LAYER)
   expect(selectedOutlineLayer['source-layer']).toBe(POLYGON_SOURCE_LAYER)
+})
+
+// Sam kolor to za malo: zgloszony budynek kryty 0,62 wobec 0,22 sasiada bylby nadal oznaczony,
+// tylko innym srodkiem niz czerwien. Wylaczony przelacznik ma dawac mape jednolita.
+it('drops opacity and line width differences too, not only the red', () => {
+  expect(fillOpacity(true)).toBe(FILL_OPACITY)
+  expect(lineWidth(true)).toBe(LINE_WIDTH)
+
+  expect(fillOpacity(false)).toBe(NEUTRAL_FILL_OPACITY)
+  expect(lineWidth(false)).toBe(NEUTRAL_LINE_WIDTH)
+  // Zadnego odwolania do rejestru: liczba, nie wyrazenie po `listed`.
+  expect(typeof fillOpacity(false)).toBe('number')
+  expect(typeof lineWidth(false)).toBe('number')
+})
+
+it('leaves the map exactly as it looks today when the toggle is on', () => {
+  // Stan domyslny nie moze sie zmienic przez dodanie przelacznika.
+  expect(buildingsFillLayer.paint?.['fill-opacity']).toEqual(FILL_OPACITY)
+  expect(buildingsOutlineLayer.paint?.['line-width']).toEqual(LINE_WIDTH)
+  expect(NEUTRAL_FILL_OPACITY).toBe(0.22)
+  expect(NEUTRAL_LINE_WIDTH).toBe(0.7)
 })

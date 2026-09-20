@@ -7,17 +7,23 @@ import {
   CLICKABLE_LAYER_IDS,
   HIGHLIGHT_LAYER_IDS,
   LAYER_IDS,
+  NEUTRAL_FILL_OPACITY,
+  NEUTRAL_LINE_WIDTH,
   SCAN_AREA_LAYER_IDS,
   SCAN_AREA_SOURCE_ID,
   SOURCE_ID,
   SOURCE_MAX_ZOOM,
+  STATUS_COLORS,
+  fillColor,
+  outlineColor,
 } from './layers'
 import { MapView } from './MapView'
 
 type MapEvent = { point: { x: number; y: number } }
 type Handler = (event: MapEvent) => void
 type Feature = { id: number | string; layer: { id: string } }
-type AddedLayer = { id: string; type: string }
+/** Warstwa w atrapie trzyma swoje `paint` i `layout`, bo przelacznik rejestru zmienia wlasnie je. */
+type AddedLayer = { id: string; type: string; paint?: Record<string, unknown>; layout?: Record<string, unknown> }
 /** Tyle ze zrodla MapLibre, ile uzywa komponent: rodzaj, dane i podmiana danych w miejscu. */
 type SourceEntry = { type?: string; data?: unknown; setData?: (data: unknown) => void }
 
@@ -69,6 +75,15 @@ function layerIds(): string[] {
   return addedLayers.map((layer) => layer.id)
 }
 
+/** Aktualna wartosc wlasciwosci malowania — po dodaniu warstwy albo po `setPaintProperty`. */
+function paintOf(id: string, property: string): unknown {
+  return addedLayers.find((layer) => layer.id === id)?.paint?.[property]
+}
+
+function layoutOf(id: string, property: string): unknown {
+  return addedLayers.find((layer) => layer.id === id)?.layout?.[property]
+}
+
 // jsdom nie ma WebGL, wiec cala MapLibre jest podmieniona; mock zapisuje, co komponent zrobil z mapa.
 vi.mock('maplibre-gl', () => ({
   Map: class {
@@ -106,11 +121,25 @@ vi.mock('maplibre-gl', () => ({
     getSource(id: string) {
       return sources.find(([sourceId]) => sourceId === id)?.[1]
     }
+    // Kopia, nie referencja: warstwa na mapie ma zyc wlasnym zyciem, a `setPaintProperty`
+    // na wspoldzielonym obiekcie nadpisywaloby definicje warstwy z layers.ts na caly plik testow.
     addLayer(layer: AddedLayer) {
-      addedLayers.push(layer)
+      addedLayers.push({ ...layer })
     }
     getLayer(id: string) {
       return addedLayers.find((layer) => layer.id === id)
+    }
+    // Obie musza naprawde zapisywac: atrapa, ktora tylko przyjmuje wywolanie, nie odroznilaby
+    // ustawionego koloru od jego braku i testy przelacznika niczego by nie dowodzily.
+    setPaintProperty(id: string, property: string, value: unknown) {
+      const layer = addedLayers.find((entry) => entry.id === id)
+      if (!layer) throw new Error(`setPaintProperty na nieistniejacej warstwie ${id}`)
+      layer.paint = { ...layer.paint, [property]: value }
+    }
+    setLayoutProperty(id: string, property: string, value: unknown) {
+      const layer = addedLayers.find((entry) => entry.id === id)
+      if (!layer) throw new Error(`setLayoutProperty na nieistniejacej warstwie ${id}`)
+      layer.layout = { ...layer.layout, [property]: value }
     }
     // Prawdziwa MapLibre razem ze starym stylem usuwa zrodla i warstwy dodane recznie,
     // a potem wysyla `style.load`. Mock musi robic to samo, inaczej test nie zauwazylby,
@@ -424,6 +453,82 @@ it('never lets a click on the scanned area pass as a click on a building', () =>
   expect(CLICKABLE_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.fill)
   expect(CLICKABLE_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.outline)
   expect(onSelect).toHaveBeenCalledWith(null)
+})
+
+// Przelacznik rejestru. Domyslnie wlaczony, wiec mapa startuje dokladnie tak jak dotad:
+// zgloszone na czerwono, cieplo widoczne.
+it('keeps the registry highlight on by default', () => {
+  render(<MapView />)
+  fire('style.load')
+
+  expect(paintOf(LAYER_IDS.fill, 'fill-color')).toEqual(fillColor(true))
+  expect(paintOf(LAYER_IDS.outline, 'line-color')).toEqual(outlineColor(true))
+  expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('visible')
+})
+
+it('paints every building in the neutral colour and hides the heat when the highlight is off', () => {
+  const view = render(<MapView />)
+  fire('style.load')
+
+  view.rerender(<MapView showRegistry={false} />)
+
+  expect(paintOf(LAYER_IDS.fill, 'fill-color')).toBe(STATUS_COLORS.notListed)
+  expect(paintOf(LAYER_IDS.outline, 'line-color')).toBe(STATUS_COLORS.notListed)
+  expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('none')
+  // Krycie i grubosc tez, bo inaczej zgloszony budynek zostalby oznaczony ciemniejsza szaroscia
+  // (0,62 wobec 0,22) — przelacznik zdjalby czerwien, a nie oznaczenie.
+  expect(paintOf(LAYER_IDS.fill, 'fill-opacity')).toBe(NEUTRAL_FILL_OPACITY)
+  expect(paintOf(LAYER_IDS.outline, 'line-width')).toBe(NEUTRAL_LINE_WIDTH)
+})
+
+it('brings the red and the heat back when the highlight goes on again', () => {
+  const view = render(<MapView showRegistry={false} />)
+  fire('style.load')
+
+  view.rerender(<MapView showRegistry />)
+
+  expect(paintOf(LAYER_IDS.fill, 'fill-color')).toEqual(fillColor(true))
+  expect(paintOf(LAYER_IDS.outline, 'line-color')).toEqual(outlineColor(true))
+  expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('visible')
+})
+
+// Warstwa wypelnienia jest jedynym celem klikniec, wiec wylaczone podswietlenie nie moze jej
+// schowac — uzytkownik stracilby mozliwosc otwarcia karty budynku.
+it('never hides the fill layer, because it is the only click target', () => {
+  render(<MapView showRegistry={false} />)
+  fire('style.load')
+
+  expect(layerIds()).toContain(LAYER_IDS.fill)
+  expect(layoutOf(LAYER_IDS.fill, 'visibility')).toBeUndefined()
+  expect(layoutOf(LAYER_IDS.outline, 'visibility')).toBeUndefined()
+})
+
+it('still opens a building when the registry highlight is off', () => {
+  const onSelect = vi.fn()
+  render(<MapView showRegistry={false} onSelect={onSelect} />)
+  fire('style.load')
+  hits = [{ id: 42, layer: { id: LAYER_IDS.fill } }]
+  fire('click')
+
+  expect(queries[0][1]).toEqual({ layers: [LAYER_IDS.fill] })
+  expect(onSelect).toHaveBeenCalledWith(42)
+})
+
+// `setStyle` zabiera warstwy dodane recznie, a wracaja one w stanie domyslnym — czyli
+// z czerwienia. Bez ponownego nalozenia przelacznika zmiana podkladu po cichu wlaczalaby
+// podswietlenie, ktore uzytkownik wylaczyl.
+it('keeps the registry highlight off after a basemap swap', () => {
+  const view = render(<MapView showRegistry={false} basemap="standard" />)
+  fire('style.load')
+
+  view.rerender(<MapView showRegistry={false} basemap="orthophoto" />)
+  expect(addedLayers).toHaveLength(0)
+
+  fire('style.load')
+
+  expect(paintOf(LAYER_IDS.fill, 'fill-color')).toBe(STATUS_COLORS.notListed)
+  expect(paintOf(LAYER_IDS.outline, 'line-color')).toBe(STATUS_COLORS.notListed)
+  expect(layoutOf(LAYER_IDS.density, 'visibility')).toBe('none')
 })
 
 it('ignores a basemap prop that is already applied', () => {

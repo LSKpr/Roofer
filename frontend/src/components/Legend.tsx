@@ -8,9 +8,13 @@ import { HEATMAP_RAMP_COLORS, POLYGON_MIN_ZOOM, STATUS_COLORS } from '../map/lay
 export const LISTED_COLOR = STATUS_COLORS.listed
 export const NOT_LISTED_COLOR = STATUS_COLORS.notListed
 
-type LegendProps = { className?: string }
+type LegendProps = {
+  className?: string
+  /** Stan przelacznika rejestru. Domyslnie wlaczony, czyli mapa jest taka, jak opisuje legenda. */
+  showRegistry?: boolean
+}
 
-export function Legend({ className }: LegendProps) {
+export function Legend({ className, showRegistry = true }: LegendProps) {
   return (
     <section
       aria-label="Legenda mapy"
@@ -35,6 +39,18 @@ export function Legend({ className }: LegendProps) {
           Niezgłoszony
         </li>
       </ul>
+
+      {/*
+        Bez tego zdania wylaczone podswietlenie jest cichym klamstwem: mapa jest wtedy szara
+        i wyglada dokladnie tak, jakby w tym obszarze nikt nic nie zglosil — a legenda obok
+        dalej tlumaczy czerwien, ktorej na ekranie nie ma.
+      */}
+      {!showRegistry && (
+        <p data-testid="legend-registry-off" className="mt-3 border-t border-hairline pt-3 text-xs text-ink">
+          Podświetlenie rejestru jest wyłączone: brak czerwieni nie znaczy, że nikt nic nie zgłosił. Ukryte jest też
+          zagęszczenie zgłoszeń po oddaleniu.
+        </p>
+      )}
 
       {/*
         Pasek rampy jest z plaskich pol, nie z gradientu CSS: gradienty sa poza jezykiem wizualnym,

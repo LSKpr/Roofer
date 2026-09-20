@@ -3,6 +3,7 @@ import { fetchAreaLimits, fetchHealth, type Bounds, type Health, type Place } fr
 import { BasemapSwitcher } from './components/BasemapSwitcher'
 import { BuildingPanel } from './components/BuildingPanel'
 import { Legend } from './components/Legend'
+import { RegistryToggle } from './components/RegistryToggle'
 import { ScanPanel } from './components/ScanPanel'
 import { SearchBox } from './components/SearchBox'
 import { ZoomHint } from './components/ZoomHint'
@@ -46,6 +47,12 @@ export function App() {
   const [focus, setFocus] = useState<MapFocus | null>(null)
   const [basemap, setBasemap] = useState<BasemapId>(DEFAULT_BASEMAP)
   const [drawing, setDrawing] = useState(false)
+  /**
+   * Podswietlenie rejestru. Domyslnie wlaczone, wiec mapa startuje tak jak dotad. Stan siedzi
+   * tutaj, bo ta sama wartosc steruje kolorami w `MapView` i zdaniem w `Legend` — dwie kopie
+   * rozjechalyby sie i legenda tlumaczylaby kolory, ktorych na mapie nie ma.
+   */
+  const [showRegistry, setShowRegistry] = useState(true)
   /**
    * Obszar, ktorego dotyczy wynik na ekranie. Trzyma go `App`, a nie modul rysowania: prostokat
    * jest stanem aplikacji (zyje tyle, co wynik), a rysowanie jest stanem interakcji z myszka
@@ -128,6 +135,7 @@ export function App() {
         onDrawComplete={handleDrawComplete}
         onDrawCancel={() => setDrawing(false)}
         scannedArea={scannedArea}
+        showRegistry={showRegistry}
       />
 
       {/* Warstwa paneli nie przechwytuje przeciagania mapy — klikalne sa tylko same panele. */}
@@ -176,6 +184,10 @@ export function App() {
             <div className="pointer-events-auto">
               <BasemapSwitcher value={basemap} onChange={setBasemap} />
             </div>
+            {/* Pod przelacznikiem podkladow: oba decyduja o tym, co widac na mapie, nie o danych. */}
+            <div className="pointer-events-auto">
+              <RegistryToggle checked={showRegistry} onChange={setShowRegistry} />
+            </div>
             <div className="pointer-events-auto">
               {selectedId !== null ? (
                 <BuildingPanel
@@ -198,7 +210,7 @@ export function App() {
         </div>
 
         <div className="pointer-events-auto self-start">
-          <Legend />
+          <Legend showRegistry={showRegistry} />
         </div>
       </div>
     </div>

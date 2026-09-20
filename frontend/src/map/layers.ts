@@ -114,6 +114,11 @@ export const HEATMAP_RAMP_COLORS: string[] = HEATMAP_RAMP.slice(1).map(([, color
  */
 export const FILL_OPACITY: ExpressionSpecification = ['case', ['get', 'listed'], 0.62, 0.22]
 
+/** Krycie i grubosc obrysu dla mapy bez podswietlenia rejestru: tyle, co dzis maja niezgloszone. */
+export const NEUTRAL_FILL_OPACITY = 0.22
+export const NEUTRAL_LINE_WIDTH = 0.7
+export const LINE_WIDTH: ExpressionSpecification = ['case', ['get', 'listed'], 1.2, NEUTRAL_LINE_WIDTH]
+
 export const buildingsSource: SourceSpecification = {
   type: 'vector',
   tiles: [TILES_URL],
@@ -139,6 +144,45 @@ export const statusColor: ExpressionSpecification = [
 ]
 
 /**
+ * Kolor warstwy budynkow moze byc wyrazeniem (kolor zalezny od atrybutu) albo jednym hexem.
+ * MapLibre przyjmuje oba w tym samym miejscu, ale TypeScript potrzebuje na to nazwy.
+ */
+export type StatusColorValue = ExpressionSpecification | string
+
+/**
+ * Kolor wypelnienia zalezny od przelacznika rejestru. Wylaczony przelacznik daje **zwykly hex**,
+ * a nie wyrazenie z `listed`: dopoki w kolorze siedzi `['get', 'listed']`, mapa nadal czyta
+ * rejestr i wystarczy jedna zmiana koloru w rampie, zeby zgloszone znow zaczely sie wyrozniac.
+ *
+ * Funkcja, a nie dwie stale, bo z tego samego zrodla korzysta definicja warstwy (stan poczatkowy)
+ * i `setPaintProperty` w `MapView` — inaczej przelaczenie tam i z powrotem konczyloby sie innym
+ * kolorem niz ten, z ktorym warstwa powstala.
+ */
+export function fillColor(showRegistry: boolean): StatusColorValue {
+  return showRegistry ? statusColor : STATUS_COLORS.notListed
+}
+
+/** To samo dla obrysow: obrysy zostaja widoczne, traca tylko czerwien zgloszonych. */
+export function outlineColor(showRegistry: boolean): StatusColorValue {
+  return showRegistry ? statusColor : STATUS_COLORS.notListed
+}
+
+/**
+ * Krycie i grubosc tez musza przestac zalezec od rejestru, a nie tylko kolor.
+ *
+ * Sam kolor nie wystarcza: przy wylaczonym podswietleniu zgloszony budynek bylby wprawdzie szary,
+ * ale kryty 0,62 wobec 0,22 sasiada — czyli nadal wyraznie oznaczony, tylko innym srodkiem.
+ * Przelacznik ma zdejmowac oznaczenie, a nie zamieniac czerwien na ciemniejszy odcien szarosci.
+ */
+export function fillOpacity(showRegistry: boolean): ExpressionSpecification | number {
+  return showRegistry ? FILL_OPACITY : NEUTRAL_FILL_OPACITY
+}
+
+export function lineWidth(showRegistry: boolean): ExpressionSpecification | number {
+  return showRegistry ? LINE_WIDTH : NEUTRAL_LINE_WIDTH
+}
+
+/**
  * Identyfikator obiektu w MVT nie jest atrybutem — ST_AsMVT zapisuje go w polu `id` kafla,
  * wiec `['get', 'id']` zwrocilby null. Dostep daje tylko wyrazenie `['id']`.
  * Dla braku wyboru zwracamy `false`: filtr poprawny w skladni wyrazen, ktory nie przepuszcza nic.
@@ -155,8 +199,10 @@ export const buildingsFillLayer: FillLayerSpecification = {
   'source-layer': POLYGON_SOURCE_LAYER,
   minzoom: POLYGON_MIN_ZOOM,
   paint: {
-    'fill-color': statusColor,
-    'fill-opacity': FILL_OPACITY,
+    // Warstwa powstaje w domyslnym stanie przelacznika (podswietlenie wlaczone); wylaczenie
+    // nadpisuje sam kolor przez `setPaintProperty`, z tej samej funkcji.
+    'fill-color': fillColor(true),
+    'fill-opacity': fillOpacity(true),
   },
 }
 
@@ -167,9 +213,9 @@ export const buildingsOutlineLayer: LineLayerSpecification = {
   'source-layer': POLYGON_SOURCE_LAYER,
   minzoom: POLYGON_MIN_ZOOM,
   paint: {
-    'line-color': statusColor,
+    'line-color': outlineColor(true),
     // Wlosowa linia jak w interfejsie; zgloszone dostaja wyrazniejszy obrys.
-    'line-width': ['case', ['get', 'listed'], 1.2, 0.7],
+    'line-width': lineWidth(true),
   },
 }
 

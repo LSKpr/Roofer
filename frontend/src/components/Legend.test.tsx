@@ -57,6 +57,35 @@ it('nie uzywa slownictwa sugerujacego pomiar azbestu', () => {
   expect(text).not.toMatch(/wykryto|brak azbestu|bezpieczny/i)
 })
 
+// Najwazniejsze zdanie przy wylaczonym przelaczniku: szara mapa wyglada dokladnie tak,
+// jakby w tym obszarze nie bylo zadnych zgloszen.
+it('mowi wprost, ze podswietlenie rejestru jest wylaczone', () => {
+  render(<Legend showRegistry={false} />)
+
+  expect(screen.getByText(/Podświetlenie rejestru jest wyłączone/)).toBeDefined()
+  expect(screen.getByText(/brak czerwieni nie znaczy, że nikt nic nie zgłosił/)).toBeDefined()
+  // Cieplo znika razem z czerwienia, wiec legenda mowi takze o nim.
+  expect(screen.getByText(/Ukryte jest też zagęszczenie zgłoszeń po oddaleniu/)).toBeDefined()
+})
+
+it('nie straszy tym zdaniem, kiedy podswietlenie dziala', () => {
+  render(<Legend />)
+
+  expect(screen.queryByTestId('legend-registry-off')).toBeNull()
+  expect(screen.queryByText(/Podświetlenie rejestru jest wyłączone/)).toBeNull()
+})
+
+// Przelacznik nie moze zabrac legendzie ani jednego ostrzezenia: wylaczone podswietlenie dokłada
+// zdanie, a nie zastepuje tego, co legenda mowi o niekompletnym rejestrze.
+it('trzyma wszystkie dotychczasowe zdania takze przy wylaczonym podswietleniu', () => {
+  const { container } = render(<Legend showRegistry={false} />)
+
+  expect(screen.getByText(/nie jest dowodem, że dach jest czysty/)).toBeDefined()
+  expect(screen.getByText(/nikt nic tu nie zgłosił/)).toBeDefined()
+  expect(screen.getByText(/zagęszczenie budynków zgłoszonych w rejestrze GeoAzbest/)).toBeDefined()
+  expect(container.textContent ?? '').not.toMatch(/wykryto|brak azbestu|bezpieczny/i)
+})
+
 /** Te same wartosci co tokeny --color-listed i --color-not-listed w index.css. */
 it('trzyma kolory probek w stalych, zeby zgadzaly sie z warstwami mapy', () => {
   expect(LISTED_COLOR).toBe('#c8102e')

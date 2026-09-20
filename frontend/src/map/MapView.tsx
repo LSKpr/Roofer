@@ -8,11 +8,16 @@ import { BASEMAPS, DEFAULT_BASEMAP, INITIAL_CENTER, INITIAL_ZOOM, MAX_ZOOM, MIN_
 import {
   CLICKABLE_LAYER_IDS,
   HIGHLIGHT_LAYER_IDS,
+  LAYER_IDS,
   MAP_LAYERS,
   SCAN_AREA_LAYERS,
   SCAN_AREA_SOURCE_ID,
   SOURCE_ID,
   buildingsSource,
+  fillColor,
+  fillOpacity,
+  lineWidth,
+  outlineColor,
   selectedFilter,
 } from './layers'
 
@@ -44,6 +49,11 @@ export type MapViewProps = {
    * bledem. `null` znaczy „nie ma czego pokazywac" i usuwa prostokat z mapy.
    */
   scannedArea?: Bounds | null
+  /**
+   * Czy mapa ma podswietlac budynki zgloszone w rejestrze. Domyslnie tak — wylaczenie zdejmuje
+   * czerwien i chowa cieplo, ale nie rusza samych warstw budynkow (patrz `applyRegistry`).
+   */
+  showRegistry?: boolean
 }
 
 /** Filtr ustawiamy tylko na warstwach, ktore juz istnieja — powstaja dopiero po `style.load`. */
@@ -63,6 +73,31 @@ function addBuildingLayers(instance: MapLibreMap) {
   if (!instance.getSource(SOURCE_ID)) instance.addSource(SOURCE_ID, buildingsSource)
   for (const layer of MAP_LAYERS) {
     if (!instance.getLayer(layer.id)) instance.addLayer(layer)
+  }
+}
+
+/**
+ * Przelacznik rejestru zmienia KOLOR, a nie widocznosc warstwy wypelnienia: `LAYER_IDS.fill` jest
+ * jedynym celem klikniec (`CLICKABLE_LAYER_IDS`), wiec ukrycie go zabraloby mozliwosc otwarcia
+ * karty budynku. Chowamy za to heatmape — niesie te sama informacje z rejestru, tylko na innym
+ * zoomie, wiec zostawienie jej byloby niekonsekwencja.
+ *
+ * Jak wszystko dodane recznie, wywolanie musi byc odporne na powtorzenie: po `setStyle` warstwy
+ * powstaja od nowa w stanie domyslnym i stan przelacznika trzeba nalozyc jeszcze raz.
+ */
+function applyRegistry(instance: MapLibreMap, show: boolean) {
+  if (instance.getLayer(LAYER_IDS.fill)) {
+    instance.setPaintProperty(LAYER_IDS.fill, 'fill-color', fillColor(show))
+    // Samo zdjecie czerwieni nie wystarcza: zgloszony budynek kryty 0,62 wobec 0,22 sasiada
+    // bylby nadal oznaczony, tylko innym srodkiem. Przelacznik ma zdejmowac oznaczenie.
+    instance.setPaintProperty(LAYER_IDS.fill, 'fill-opacity', fillOpacity(show))
+  }
+  if (instance.getLayer(LAYER_IDS.outline)) {
+    instance.setPaintProperty(LAYER_IDS.outline, 'line-color', outlineColor(show))
+    instance.setPaintProperty(LAYER_IDS.outline, 'line-width', lineWidth(show))
+  }
+  if (instance.getLayer(LAYER_IDS.density)) {
+    instance.setLayoutProperty(LAYER_IDS.density, 'visibility', show ? 'visible' : 'none')
   }
 }
 
@@ -105,6 +140,7 @@ export function MapView({
   onDrawComplete,
   onDrawCancel,
   scannedArea = null,
+  showRegistry = true,
 }: MapViewProps) {
   const container = useRef<HTMLDivElement | null>(null)
   const map = useRef<MapLibreMap | null>(null)
@@ -116,6 +152,7 @@ export function MapView({
   const drawCompleteRef = useRef(onDrawComplete)
   const drawCancelRef = useRef(onDrawCancel)
   const scannedAreaRef = useRef(scannedArea)
+  const showRegistryRef = useRef(showRegistry)
   const draw = useRef<RectangleDraw | null>(null)
   const styleReady = useRef(false)
   // Styl, ktory mapa juz dostala. Pierwszy dostaje przez konstruktor, wiec `setStyle` na starcie
@@ -130,6 +167,7 @@ export function MapView({
     drawCompleteRef.current = onDrawComplete
     drawCancelRef.current = onDrawCancel
     scannedAreaRef.current = scannedArea
+    showRegistryRef.current = showRegistry
   })
 
   useEffect(() => {
@@ -149,6 +187,9 @@ export function MapView({
     instance.on('style.load', () => {
       styleReady.current = true
       addBuildingLayers(instance)
+      // Warstwy wracaja w stanie domyslnym (podswietlenie wlaczone), wiec wylaczony przelacznik
+      // trzeba nalozyc od nowa — inaczej zmiana podkladu po cichu przywracalaby czerwien.
+      applyRegistry(instance, showRegistryRef.current)
       // Wybor moze pochodzic z czasu przed zaladowaniem stylu (np. z adresu URL) albo przetrwac
       // zmiane podkladu, ktora zabrala warstwy podswietlenia razem ze starym stylem.
       applyHighlight(instance, selectedRef.current)
@@ -247,6 +288,16 @@ export function MapView({
     if (drawing && !handle.active) handle.start()
     if (!drawing && handle.active) handle.cancel()
   }, [drawing])
+
+  /**
+   * Tak samo jak z podswietleniem wyboru: przed `style.load` nie ma jeszcze warstw, ktorym mozna
+   * przestawic kolor, a stan z tego czasu nadrabia handler stylu.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady.current) return
+    applyRegistry(instance, showRegistry)
+  }, [showRegistry])
 
   // Przed `style.load` nie ma czego filtrowac — wybor z tego czasu nadrabia sam handler stylu.
   useEffect(() => {

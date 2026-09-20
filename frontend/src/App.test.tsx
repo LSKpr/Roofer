@@ -24,6 +24,7 @@ vi.mock('./map/MapView', () => ({
     basemap,
     drawing,
     scannedArea,
+    showRegistry,
   }: {
     onSelect?: (id: number | null) => void
     onZoomChange?: (zoom: number) => void
@@ -31,12 +32,15 @@ vi.mock('./map/MapView', () => ({
     basemap?: string
     drawing?: boolean
     scannedArea?: StubBounds | null
+    showRegistry?: boolean
   }) => (
     <div>
       {/* Propsy sterujace mapa wystawiamy jako tekst, zeby dalo sie je sprawdzic bez MapLibre. */}
       <span data-testid="map-basemap">{basemap}</span>
       <span data-testid="map-drawing">{drawing ? 'rysuje' : 'nie rysuje'}</span>
       <span data-testid="map-scanned-area">{areaLabel(scannedArea)}</span>
+      {/* Tekst, a nie booleana: `undefined` ma byc widoczny jako blad, a nie jako „wylaczone". */}
+      <span data-testid="map-show-registry">{String(showRegistry)}</span>
       <button type="button" onClick={() => onSelect?.(42)}>
         wybierz budynek
       </button>
@@ -265,6 +269,41 @@ it('always shows the legend, so the colours are never unexplained', async () => 
   render(<App />)
 
   expect(await screen.findByText(/Zgłoszony w rejestrze GeoAzbest/)).toBeDefined()
+})
+
+// Przelacznik rejestru startuje wlaczony: mapa ma wygladac tak samo jak przed jego dodaniem.
+it('starts with the registry highlight on', async () => {
+  stubApi()
+
+  render(<App />)
+
+  expect(screen.getByTestId('map-show-registry').textContent).toBe('true')
+  expect((screen.getByLabelText('Podświetl zgłoszone w rejestrze') as HTMLInputElement).checked).toBe(true)
+})
+
+it('turns the registry highlight off for the map when the checkbox is unticked', async () => {
+  stubApi()
+
+  render(<App />)
+  fireEvent.click(screen.getByLabelText('Podświetl zgłoszone w rejestrze'))
+
+  expect(screen.getByTestId('map-show-registry').textContent).toBe('false')
+
+  fireEvent.click(screen.getByLabelText('Podświetl zgłoszone w rejestrze'))
+  expect(screen.getByTestId('map-show-registry').textContent).toBe('true')
+})
+
+// Szara mapa wyglada tak, jakby nie bylo zadnych zgloszen — legenda musi powiedziec, ze to
+// stan przelacznika, a nie stan rejestru.
+it('makes the legend admit that the highlight is off', async () => {
+  stubApi()
+
+  render(<App />)
+  expect(screen.queryByText(/Podświetlenie rejestru jest wyłączone/)).toBeNull()
+
+  fireEvent.click(screen.getByLabelText('Podświetl zgłoszone w rejestrze'))
+
+  expect(screen.getByText(/brak czerwieni nie znaczy, że nikt nic nie zgłosił/)).toBeDefined()
 })
 
 it('opens the building card for the building picked on the map', async () => {
