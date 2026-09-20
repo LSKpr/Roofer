@@ -109,25 +109,28 @@ function roofsLabel(count: number): string {
 }
 
 /**
- * Ile sekund zajmuje zwykle ocena jednego dachu. Zmierzone na lokalnej kopii uslugi, gdzie kafle
- * Google ida przez zwykle lacze: 251 dachow w 44,6 s, 580 w 75,7 s, 1138 w 116,5 s — czyli
- * 0,10-0,18 s na dach, bo waskim gardlem jest pobieranie kafli, nie model.
+ * Gorna granica czasu na jeden dach. Zmierzone na lokalnej kopii uslugi: ten sam obszar 464 dachow
+ * z kaflami w cache szedl 19,2 s, 24,3 s i 41,3 s w trzech kolejnych przebiegach — dwukrotny
+ * rozrzut na tej samej pracy, bo laptopowy procesor zjezdza z taktowaniem. Sama inferencja to
+ * 40-50 ms na dach i tego nie da sie skrocic; pobranie kafli dla nowego obszaru doklada
+ * kilkanascie sekund.
  *
- * Bierzemy gorny koniec przedzialu: obiecana minuta, ktora robi sie dwiema, jest gorsza niz
- * ostrozny szacunek, ktory konczy sie wczesniej.
+ * Dlatego mowimy „up to", a nie „about": przy takim rozrzucie kazda konkretna liczba jest
+ * nieprawda w jedna albo w druga strone, a obietnica, ktora konczy sie wczesniej, jest uczciwsza
+ * niz taka, ktora sie przedluza.
  */
 const SECONDS_PER_ROOF = 0.18
 
 /**
- * Szacowany czas oczekiwania. Przy pieciuset dachach zadanie idzie ponad minute i bez tej
- * informacji panel wyglada na zawieszony — a uzytkownik, ktory nie wie, ile czekac, przerywa
- * i probuje jeszcze raz.
+ * Szacowany czas oczekiwania. Przy pieciuset dachach zadanie idzie od poltorej do trzech minut
+ * i bez tej informacji panel wyglada na zawieszony — a uzytkownik, ktory nie wie, ile czekac,
+ * przerywa i zaraz placi za to samo drugi raz.
  */
 function waitLabel(roofs: number): string {
   const seconds = Math.round(roofs * SECONDS_PER_ROOF)
   if (seconds < 15) return 'usually a few seconds'
-  if (seconds < 90) return `usually about ${Math.max(10, Math.round(seconds / 10) * 10)} seconds`
-  return `usually about ${Math.round(seconds / 60)} min`
+  if (seconds < 90) return `up to about ${Math.max(10, Math.round(seconds / 10) * 10)} seconds`
+  return `up to about ${Math.round(seconds / 60)} min`
 }
 
 /**

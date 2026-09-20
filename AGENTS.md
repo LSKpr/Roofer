@@ -212,22 +212,39 @@ to, żeby za duży prostokąt dostał własne 400 z konkretną liczbą w kilkudz
 zamiast czekać kilkanaście sekund na `413` od usługi. Ustawiona niżej blokuje zapytania, które by
 przeszły; wyżej — traci cały sens.
 
-Skąd 500 i 10 km², a nie więcej. Pomiar na rozłącznych obszarach (kafle Google przez zwykłe łącze):
+**Co naprawdę jest wąskim gardłem: model na CPU, nie pobieranie kafli.** Pomiar rozdzielający,
+na tym samym obszarze 464 budynków:
 
-| obszar | budynków | czas | na budynek |
-|---|---:|---:|---:|
-| Zwoleń-E | 251 | 44,6 s | 178 ms |
-| Radom-S | 580 | 75,7 s | 131 ms |
-| Grójec | 1138 | 116,5 s | 102 ms |
+| pomiar | czas |
+|---|---:|
+| sama inferencja ONNX, 464 kadry, bez sieci | **18,8 s** (40 ms/dach) |
+| zapytanie z kaflami w cache | 19,2 s |
+| zapytanie z pustym cache kafli | 32,0 s |
+| trzy identyczne przebiegi z cache | **41,3 s / 19,2 s / 24,3 s** |
 
-Wąskim gardłem jest pobieranie kafli, nie model. Tysiąc budynków to dwie minuty patrzenia w napis,
-więc 500 (~75 s) jest granicą tego, co da się pokazać jako działający interfejs, i mieści się
-w 180-sekundowym limicie żądania. Panel podaje przy tym szacowany czas (`SECONDS_PER_ROOF = 0.18`
-w `ScanPanel.tsx`, z tych samych pomiarów) — bez tego wygląda na zawieszony i użytkownik przerywa.
+Czyli z kaflami w cache czas odpowiedzi **jest** czasem inferencji, a pobranie kafli dla nowego
+obszaru dokłada kilkanaście sekund. Modelu nie da się przyspieszyć: 4 wątki dają 19,9 s, 8 wątków
+18,1 s, a 16 wątków **pogarsza** do 23,0 s przez rywalizację o rdzenie; GPU nie ma (Intel Iris Xe).
 
-Sprawdzone na żywo przez nasz endpoint: 464 budynki w **64,8 s**, odpowiedź 129 KB, `truncated: false`
+Najważniejsza liczba w tej tabeli to ostatni wiersz: **dwukrotny rozrzut na identycznej pracy**,
+bo laptopowy procesor zjeżdża z taktowaniem. Każdy pojedynczy pomiar czasu na tej maszynie jest
+więc niepewny co do czynnika dwa — dlatego panel mówi „up to about", a nie „about"
+(`SECONDS_PER_ROOF = 0.18` w `ScanPanel.tsx` to górna granica, nie średnia).
+
+Pułapka, w którą sam wpadłem: pierwsza wersja tych notatek podawała 64,8 s dla tego obszaru
+i wnioskowała z tego, że wąskim gardłem są kafle (68% czasu). Ten przebieg **nakładał się na
+benchmark 1500 budynków liczący się w tle**, który konkurował o CPU i sieć. Mierząc czas na tej
+maszynie, upewnij się, że nic innego nie liczy — inaczej wynik jest o czynnik dwa za duży i prowadzi
+do optymalizowania nie tego, co trzeba.
+
+500 budynków (~25-75 s zależnie od stanu procesora) mieści się w 180-sekundowym limicie żądania
+z zapasem. Sprawdzone na żywo przez nasz endpoint: 464 budynki, odpowiedź 129 KB, `truncated: false`
 (ważne, bo przycięta lista wyłącza suwak progu), 120 niezgłoszonych budynków z flagą. Prostokąt
 z 691 budynkami dostaje 400 w **30 ms**.
+
+Cache kafli usługi ma teraz 1 GiB i TTL 12 h (`ROOFER_TILE_CACHE_BYTES`, `ROOFER_TILE_CACHE_TTL`),
+więc **obszar pokazywany na demo warto przepuścić przez model raz wcześniej** — drugie przejście po
+tych samych kaflach jest szybsze i nie zależy od łącza.
 
 Pomiary z tego samego prostokąta pod Zwoleniem (76 budynków):
 

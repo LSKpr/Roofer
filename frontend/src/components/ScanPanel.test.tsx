@@ -654,7 +654,7 @@ it('szacuje czas oczekiwania z liczby dachow', () => {
 
   const threeHundred = aSmallScan({ stats: someStats({ total: 300, listed: 10, notListed: 290, listedShare: 0.03 }) })
   renderPanel(threeHundred, { analysisLoading: true })
-  expect(screen.getByText('usually about 50 seconds')).toBeDefined()
+  expect(screen.getByText('up to about 50 seconds')).toBeDefined()
 })
 
 // Piecset dachow to gorna granica bramki, wiec to jest najdluzsze oczekiwanie, jakie panel obiecuje.
@@ -663,7 +663,7 @@ it('przy limicie bramki obiecuje minuty, a nie sekundy', () => {
 
   renderPanel(atLimit, { analysisLoading: true })
 
-  expect(screen.getByText('usually about 2 min')).toBeDefined()
+  expect(screen.getByText('up to about 2 min')).toBeDefined()
 })
 
 it('przy duzym obszarze podaje szacunek w minutach, nie w setkach sekund', () => {
@@ -671,5 +671,5 @@ it('przy duzym obszarze podaje szacunek w minutach, nie w setkach sekund', () =>
 
   renderPanel(thousand, { analysisLoading: true })
 
-  expect(screen.getByText('usually about 3 min')).toBeDefined()
+  expect(screen.getByText('up to about 3 min')).toBeDefined()
 })
