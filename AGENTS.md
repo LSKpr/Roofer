@@ -264,6 +264,59 @@ Przełączenie z powrotem na zdalną instancję (albo na cokolwiek innego) to zm
 i tokenu w `.env`. Ani jedna linia naszego kodu nie wie, gdzie stoi model — po to było gniazdo
 dostawcy w `app/prediction.py`.
 
+### Lista niezgłoszonych dachów z flagą — właściwy produkt tej aplikacji
+
+Pod liczbami modelu stoi sekcja `Not in the register, flagged by the model (N)`: dachy spełniające
+naraz `probability >= próg` i `listed === false`, posortowane malejąco po ocenie, klikalne (otwierają
+kartę budynku ze zdjęciem i notą). Liczba prowadząca bez tej listy była bezużyteczna — urzędnik
+potrzebuje konkretnych adresów, nie statystyki.
+
+Filtr siedzi w `lib/modelStats.ts` (`selectFlaggedNotListed`) obok `recountStats`, bo to ten sam
+warunek progu; w komponencie żyłby w dwóch miejscach i pierwsza poprawka rozjechałaby listę z liczbą
+nad nią. Osobny test wiąże długość listy z `suspectedNotListed` dla pięciu progów.
+
+**Ta sekcja najłatwiej w całej aplikacji zamienia się w donos**, więc wymuszone jest w niej trzy razy
+to samo, innymi słowami: że model porównuje wygląd pokrycia na zdjęciu satelitarnym (77% trafności,
+63% wykrywalności), że brak w rejestrze znaczy tylko „nikt nie zgłosił" — nie „nielegalne" i nie
+„właściciel zataił" — i wprost, że to jest **lista do sprawdzenia w terenie, nie lista ustaleń**.
+Zdania nie znikają, gdy lista jest pusta, bo dotyczą sekcji, nie wierszy.
+
+### Strumieniowanie: `POST /api/area/plan` i analiza kawałkami
+
+Model przyjmuje 500 budynków na żądanie, a skan sięga 25 km², więc obszar dzielimy na kawałki
+i analizujemy je po kolei, publikując wynik po każdym. Dzięki temu limit 500 przestał być granicą
+tego, co użytkownik może zaznaczyć, a pomarańczowe obrysy i liczby pojawiają się w trakcie.
+
+`/api/area/plan` dzieli prostokąt **połową po dłuższym boku mierzonym w metrach** (nie ćwiartkami:
+te mnożą liczbę zapytań do modelu ×4, a każde to kilkadziesiąt sekund inferencji; nie w stopniach,
+bo na 51. paraleli stopień długości ma 70 km wobec 111 km stopnia szerokości i kawałki wychodziłyby
+coraz węższe). Koszt to `2N − 1` zapytań do bazy, twardo ≤ 127. Puste kawałki odpadają bez dalszego
+podziału. Zmierzone: 691 budynków → 2 kawałki w 50 ms; 3 310 w Warszawie → 12 kawałków w 330 ms;
+24 km² w Śródmieściu → 31 kawałków pokrywających 98,4% i `truncated: true`, bo jeden blok 0,38 km²
+ma ponad 500 budynków.
+
+Trzy rzeczy, bez których strumieniowanie kłamie:
+
+- **Deduplikacja po `osm_id` jest obowiązkowa.** Budynek na linii cięcia wraca w dwóch kawałkach
+  (12 z 703 w prostokącie testowym, 176 z 3 486 w Warszawie). Bez niej byłby liczony dwa razy
+  w każdej statystyce i dwa razy na liście.
+- **`noResult` jest przybliżeniem** i jest to jedyne takie miejsce: backend nie oddaje
+  identyfikatorów dachów bez oceny, więc taki dach stojący dokładnie na cięciu policzy się dwa razy.
+  Opisane komentarzem w `mergeAnalyses`.
+- **Wynik częściowy musi się przedstawiać**: dopóki nie spłynęły wszystkie kawałki, przy liczbach
+  stoi `These numbers cover 3 of 7 areas analysed so far.` Bez tego zdania częściowe „120 flagged"
+  czyta się jak wynik końcowy.
+
+Zamknięcie panelu albo nowe zaznaczenie **przerywa pętlę**, a nie tylko chowa wynik — inaczej
+w tle zostają minuty zapytań do modelu. Błąd jednego kawałka zostawia to, co już spłynęło, i pokazuje
+komunikat; wyrzucanie kilku minut inferencji z powodu jednego 503 byłoby najgorszym zachowaniem.
+
+Jedyny limit, który został na wejściu, to budżet czasu: **`MAX_STREAM_ROOFS = 2000`** w `ScanPanel`
+(przy 40–115 ms na dach to 1,5–4 minuty; 10 631 budynków w centrum Warszawy to kwadranse).
+
+Sprawdzone na żywo: 822 budynki, 2 kawałki, 37,8 s razem — po pierwszym kawałku 105 niezgłoszonych
+z flagą, po drugim 211.
+
 ### Analiza całego zaznaczonego obszaru
 
 `POST /api/area/analyze` przepuszcza prostokąt przez model jednym żądaniem i zestawia jego ocenę

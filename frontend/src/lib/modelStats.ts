@@ -1,4 +1,4 @@
-import type { AreaAnalysis, AreaAnalysisStats } from '../api/client'
+import type { AreaAnalysis, AreaAnalysisStats, SuspectedRoof } from '../api/client'
 
 /**
  * Liczniki modelu przeliczone dla progu wybranego w interfejsie.
@@ -53,6 +53,30 @@ export function recountStats(analysis: AreaAnalysis, threshold: number): AreaAna
     suspectedRoofAreaM2: roundTo(suspectedRoofAreaM2, 1),
     threshold,
   }
+}
+
+/**
+ * Dachy na liste „niezgloszone z flaga": ocena od progu w gore i brak w rejestrze, najwyzsza
+ * ocena na gorze.
+ *
+ * Wybor stoi tutaj, a nie w komponencie, bo to dokladnie ten sam warunek progu
+ * (`probability >= threshold`), ktorym `recountStats` liczy `suspectedNotListed`. Gdyby filtrowal
+ * komponent, warunek istnialby w dwoch miejscach i pierwsza poprawka w jednym rozjechalaby liste
+ * z liczba nad nia — a lista, ktora nie zgadza sie z liczba prowadzaca, jest gorsza niz jej brak.
+ *
+ * Panel podaje tu `threshold` z wyniku `recountStats`, wiec dlugosc tej listy rowna sie
+ * `suspectedNotListed`. Jedyny wyjatek to przycieta odpowiedz modelu: tam liczby zostaja
+ * backendowe (patrz `recountStats`), a `analysis.buildings` nie zawiera wszystkich ocen, wiec
+ * lista jest krotsza od liczby w naglowku i panel mowi to zdaniem pod lista.
+ *
+ * Kolejnosc malejaca po ocenie, bo pierwszy wiersz to pierwszy dach do obejrzenia. Przy rownych
+ * ocenach zostaje kolejnosc z odpowiedzi — `Array#sort` jest stabilny, a `filter` pracuje na
+ * kopii, wiec `analysis.buildings` zostaje nietkniete.
+ */
+export function selectFlaggedNotListed(analysis: AreaAnalysis, threshold: number): SuspectedRoof[] {
+  return analysis.buildings
+    .filter((roof) => !roof.listed && roof.probability >= threshold)
+    .sort((left, right) => right.probability - left.probability)
 }
 
 /**

@@ -191,6 +191,13 @@ export type AreaAnalysisStats = {
   suspectedRoofAreaM2: number
   threshold: number
   modelName: string
+  /**
+   * Budynki ocenione przez model, ktorych nie ma w naszej bazie — poza wszystkimi licznikami
+   * powyzej, bo o ich statusie rejestrowym nic nie wiemy. Przy wspolnym snapshocie OSM jest to
+   * zero, wiec pole jest opcjonalne; front go nie pokazuje, ale przy scalaniu kawalkow musi je
+   * zsumowac, zeby rozjazd snapshotow nie zniknal po drodze.
+   */
+  unknownToUs?: number
 }
 
 export type AreaAnalysis = {
@@ -219,6 +226,54 @@ export async function fetchAreaAnalysis(bounds: Bounds, baseUrl: string = API_BA
   }
   if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
   return (await response.json()) as AreaAnalysis
+}
+
+/**
+ * Jeden kawalek planu: prostokat, ktory na pewno przejdzie bramke `/api/area/analyze`.
+ *
+ * Ksztalt jest zgodny z `Bounds`, wiec kawalek idzie do `fetchAreaAnalysis` wprost. `buildings`
+ * jest tu po to, zeby dalo sie pokazac postep i oszacowac czas — liczy je bramka tym samym
+ * zapytaniem, ktorym sprawdza limit.
+ */
+export type AreaPlanChunk = { sw: Coordinates; ne: Coordinates; buildings: number }
+
+/**
+ * Podzial zaznaczenia na kawalki mieszczace sie w limitach modelu.
+ *
+ * `buildings` i `areaKm2` dotycza CALEGO zaznaczenia, nie sumy kawalkow: budynek stojacy na linii
+ * ciecia wpada do obu kawalkow, wiec suma `chunks[].buildings` jest wieksza — dlatego wyniki
+ * kawalkow trzeba deduplikowac po `id` (robi to `useAreaAnalysis`).
+ *
+ * `truncated` znaczy „podzial przerwano": fragment zaznaczenia byl tak gesty, ze po wszystkich
+ * cieciach nadal nie miescil sie w limicie, i nie ma swojego kawalka. To NIE jest „lista jest
+ * przycieta na koncu" — tamten fragment nie zostanie obejrzany przez model wcale.
+ */
+export type AreaPlan = {
+  chunks: AreaPlanChunk[]
+  buildings: number
+  areaKm2: number
+  truncated: boolean
+}
+
+/**
+ * Podzial zaznaczenia na kawalki dla modelu. Ta trasa nie wola modelu — kosztuje tylko liczniki
+ * budynkow z bazy (50–330 ms na zmierzonych obszarach), wiec wolno ja zawolac przed kazda analiza.
+ *
+ * Przy 400 i 503 backend tlumaczy w `detail`, co jest nie tak; ten tekst jest gotowy do pokazania
+ * uzytkownikowi i nie przerabiamy go — tak samo jak w `fetchAreaAnalysis`.
+ */
+export async function fetchAreaPlan(bounds: Bounds, baseUrl: string = API_BASE_URL): Promise<AreaPlan> {
+  const response = await fetch(`${baseUrl}/api/area/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bounds),
+  })
+  if (response.status === 400 || response.status === 503) {
+    const body = (await response.json()) as { detail?: string }
+    throw new Error(body.detail ?? 'Could not plan the area analysis.')
+  }
+  if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
+  return (await response.json()) as AreaPlan
 }
 
 /** Miejsce z wyszukiwarki. `bbox` jest w kolejnosci [south, west, north, east]. */

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { AreaAnalysis, AreaAnalysisStats, SuspectedRoof } from '../api/client'
-import { effectiveThreshold, recountStats } from './modelStats'
+import { effectiveThreshold, recountStats, selectFlaggedNotListed } from './modelStats'
 
 function aRoof(id: number, probability: number, listed: boolean, areaM2: number): SuspectedRoof {
   return { id, probability, listed, areaM2, geometry: null }
@@ -200,4 +200,71 @@ it('obowiazujacy prog to wybor uzytkownika, a bez wyboru prog z odpowiedzi', () 
   expect(effectiveThreshold(anAnalysis(), 0.85)).toBe(0.85)
   // Tam, gdzie nie przeliczamy, obowiazuje prog, ktorym policzone sa widoczne liczby.
   expect(effectiveThreshold(anAnalysis({ truncated: true }), 0.85)).toBe(0.5)
+})
+
+/** Same identyfikatory: w tym wyborze liczy sie to, ktore dachy weszly i w jakiej kolejnosci. */
+function pickedIds(analysis: AreaAnalysis, threshold: number): number[] {
+  return selectFlaggedNotListed(analysis, threshold).map((roof) => roof.id)
+}
+
+// Najwazniejszy warunek tej listy: zgloszony dach nie ma prawa sie na niej znalezc, nawet z
+// najwyzsza ocena. Lista, ktora pokazuje zgloszone budynki jako niezgloszone, jest gorsza niz brak
+// listy — ten test pada przy usunieciu warunku `!listed`.
+it('bierze tylko dachy poza rejestrem i tylko od progu w gore', () => {
+  // 301 ma najwyzsza ocene (0,81), ale jest zgloszony. 305 i 306 sa ponizej progu.
+  expect(pickedIds(anAnalysis(), 0.5)).toEqual([302, 303])
+})
+
+it('ustawia najwyzsza ocene na gorze, bo to pierwszy dach do obejrzenia', () => {
+  expect(pickedIds(anAnalysis(), 0)).toEqual([302, 303, 305, 306])
+})
+
+// Ta sama granica, ktorej pilnuje `recountStats`: ocena rowna progowi jest podejrzeniem.
+it('ocene rowna progowi wpuszcza na liste', () => {
+  expect(pickedIds(anAnalysis(), 0.5)).toContain(303)
+  expect(pickedIds(anAnalysis(), 0.51)).not.toContain(303)
+})
+
+// Lista i liczba prowadzaca musza pochodzic z tego samego progu, bo inaczej naglowek obiecuje
+// inna liczbe dachow, niz da sie policzyc wierszami.
+it('ma tyle pozycji, ile wynosi suspectedNotListed przy tym samym progu', () => {
+  for (const threshold of [0, 0.3, 0.5, 0.75, 1]) {
+    const analysis = anAnalysis()
+
+    expect(selectFlaggedNotListed(analysis, threshold)).toHaveLength(
+      recountStats(analysis, threshold).suspectedNotListed,
+    )
+  }
+})
+
+it('przy progu nad wszystkimi ocenami oddaje pusta liste, a nie cala', () => {
+  expect(selectFlaggedNotListed(anAnalysis(), 1.01)).toEqual([])
+})
+
+// Sortowanie w miejscu na `analysis.buildings` przestawialoby dachy tez na mapie, ktora czyta
+// te sama tablice.
+it('nie przestawia dachow w odpowiedzi modelu', () => {
+  const analysis = anAnalysis()
+
+  selectFlaggedNotListed(analysis, 0)
+
+  expect(analysis.buildings.map((roof) => roof.id)).toEqual([301, 302, 303, 304, 305, 306])
+})
+
+it('przy rownych ocenach zostawia kolejnosc z odpowiedzi', () => {
+  const sameScore = anAnalysis({
+    buildings: [aRoof(701, 0.6, false, 90), aRoof(702, 0.6, false, 300), aRoof(703, 0.9, false, 70)],
+  })
+
+  expect(pickedIds(sameScore, 0.5)).toEqual([703, 701, 702])
+})
+
+// Przy przycietej odpowiedzi liczby sa backendowe, a tu sa tylko te dachy, ktore przyszly —
+// panel przyznaje sie do tego zdaniem pod lista.
+it('przy przycietej odpowiedzi opisuje tylko dachy, ktore przyszly', () => {
+  const truncated = anAnalysis({ stats: { ...BACKEND_STATS, suspectedNotListed: 120 }, truncated: true })
+
+  // Liczby zostaja backendowe (120 w calym obszarze), a lista zna tylko oceny, ktore przyszly.
+  expect(pickedIds(truncated, truncated.stats.threshold)).toEqual([302, 303])
+  expect(recountStats(truncated, truncated.stats.threshold).suspectedNotListed).toBe(120)
 })

@@ -3,9 +3,11 @@ import {
   TILES_URL,
   fetchAreaAnalysis,
   fetchAreaLimits,
+  fetchAreaPlan,
   fetchBuilding,
   fetchHealth,
   type AreaAnalysis,
+  type AreaPlan,
   type Bounds,
   type Building,
   type Health,
@@ -154,4 +156,59 @@ it('rejects an unexpected status from the analysis endpoint', async () => {
   stubFetch(500, {})
 
   await expect(fetchAreaAnalysis(BOUNDS, 'http://api.test')).rejects.toThrow('status 500')
+})
+
+/** Prawdziwy plan prostokata z 691 budynkami pod Zwoleniem: dwa kawalki, zaden ponad limitem. */
+const PLAN: AreaPlan = {
+  chunks: [
+    { sw: { lng: 21.5745, lat: 51.3555 }, ne: { lng: 21.5805, lat: 51.3629 }, buildings: 406 },
+    { sw: { lng: 21.5805, lat: 51.3555 }, ne: { lng: 21.5865, lat: 51.3629 }, buildings: 297 },
+  ],
+  buildings: 691,
+  areaKm2: 0.686,
+  truncated: false,
+}
+
+it('asks for the chunk plan of the same rectangle the scan used', async () => {
+  const fetchStub = stubFetch(200, PLAN)
+
+  await expect(fetchAreaPlan(BOUNDS, 'http://api.test')).resolves.toEqual(PLAN)
+  expect(fetchStub).toHaveBeenCalledWith('http://api.test/api/area/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(BOUNDS),
+  })
+})
+
+// Kawalek ma ten sam ksztalt co zaznaczenie, wiec idzie do analizy wprost, bez przepisywania
+// wspolrzednych — a przepisywanie bylo jedynym miejscem, gdzie moglyby sie pomylic narozniki.
+it('hands a plan chunk to the analysis endpoint unchanged', async () => {
+  const fetchStub = stubFetch(200, ANALYSIS)
+  const chunk = PLAN.chunks[0]
+
+  await fetchAreaAnalysis(chunk, 'http://api.test')
+
+  const [url, init] = fetchStub.mock.calls[0] as [string, RequestInit]
+  expect(url).toBe('http://api.test/api/area/analyze')
+  expect(init.body).toBe(JSON.stringify(chunk))
+})
+
+it('passes the plan detail through untouched', async () => {
+  stubFetch(400, { detail: 'The selection has no area: the corners are the same point.' })
+
+  await expect(fetchAreaPlan(BOUNDS, 'http://api.test')).rejects.toThrow(
+    'The selection has no area: the corners are the same point.',
+  )
+})
+
+it('says something instead of nothing when the plan cannot be made', async () => {
+  stubFetch(503, {})
+
+  await expect(fetchAreaPlan(BOUNDS, 'http://api.test')).rejects.toThrow('Could not plan the area analysis.')
+})
+
+it('rejects an unexpected status from the plan endpoint', async () => {
+  stubFetch(500, {})
+
+  await expect(fetchAreaPlan(BOUNDS, 'http://api.test')).rejects.toThrow('status 500')
 })

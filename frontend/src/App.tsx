@@ -3,7 +3,6 @@ import {
   fetchAreaLimits,
   fetchHealth,
   type AreaAnalysis,
-  type AreaModelLimits,
   type Bounds,
   type Health,
   type Place,
@@ -93,13 +92,11 @@ export function App() {
    */
   const [scannedArea, setScannedArea] = useState<Bounds | null>(null)
   const [limitKm2, setLimitKm2] = useState<number | null>(null)
-  /** Limity modelu sa twardsze niz limit skanu, wiec panel trzyma je osobno. */
-  const [modelLimits, setModelLimits] = useState<AreaModelLimits | null>(null)
   const selection = useBuilding(selectedId)
   const scan = useAreaScan()
   /**
-   * Ocena modelu jest drugim krokiem, nie skutkiem skanu: model przyjmuje 100 budynkow i 4 km2,
-   * a liczy kilka sekund, wiec uruchamia ja klikniecie, a nie samo narysowanie prostokata.
+   * Ocena modelu jest drugim krokiem, nie skutkiem skanu: obszar idzie do modelu kawalek po
+   * kawalku i liczy sie minutami, wiec uruchamia ja klikniecie, a nie samo narysowanie prostokata.
    */
   const analysis = useAreaAnalysis()
   /**
@@ -125,17 +122,17 @@ export function App() {
     }
   }, [])
 
-  // Limit powierzchni zna backend; front go pokazuje, ale nie trzyma wlasnej kopii tej liczby.
+  /*
+   * Limit powierzchni zna backend; front go pokazuje, ale nie trzyma wlasnej kopii tej liczby.
+   *
+   * Limitow modelu z pola `model` panel nie potrzebuje: obszar wiekszy niz jedno zadanie dzieli
+   * `/api/area/plan` na kawalki mieszczace sie w tych limitach, wiec liczba budynkow, ktora front
+   * pilnuje sam, jest budzetem czasu, a nie limitem uslugi.
+   */
   useEffect(() => {
     let current = true
     fetchAreaLimits()
-      .then((limits) => {
-        if (!current) return
-        setLimitKm2(limits.maxAreaKm2)
-        // Bez limitow modelu nie blokujemy przycisku: wtedy odpowiada sam backend i to jego
-        // tekst zobaczy uzytkownik. Zgadywanie cudzych limitow blokowaloby dzialajace zadania.
-        setModelLimits(limits.model ?? null)
-      })
+      .then((limits) => current && setLimitKm2(limits.maxAreaKm2))
       .catch(() => undefined)
     return () => {
       current = false
@@ -278,8 +275,9 @@ export function App() {
                   analysis={analysis.analysis}
                   analysisLoading={analysis.loading}
                   analysisError={analysis.error}
+                  analysisProgress={analysis.progress}
+                  analysisSkipped={analysis.skipped}
                   onAnalyse={analyseArea}
-                  modelLimits={modelLimits}
                   threshold={threshold}
                   onThresholdChange={setThreshold}
                 />

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { App } from './App'
 import type { Building, Health } from './api/client'
@@ -136,21 +136,35 @@ const ANALYSIS = {
 
 const LIMITS = { maxAreaKm2: 25, model: { maxBuildings: 100, maxAreaKm2: 4 } }
 
+/**
+ * Plan podzialu tego prostokata. Jeden kawalek rowny calemu zaznaczeniu to najzwyklejszy przypadek:
+ * obszar, ktory miesci sie w jednym zadaniu modelu, i tak przechodzi przez plan.
+ */
+const PLAN = {
+  chunks: [{ sw: DRAWN.sw, ne: DRAWN.ne, buildings: 74 }],
+  buildings: 74,
+  areaKm2: 0.6,
+  truncated: false,
+}
+
 function stubApi(
   overrides: {
     health?: [number, unknown]
     building?: [number, unknown]
     scan?: [number, unknown]
+    plan?: [number, unknown]
     analysis?: [number, unknown]
   } = {},
 ) {
   const [healthStatus, healthBody] = overrides.health ?? [200, HEALTH]
   const [buildingStatus, buildingBody] = overrides.building ?? [200, BUILDING]
   const [scanStatus, scanBody] = overrides.scan ?? [200, SCAN]
+  const [planStatus, planBody] = overrides.plan ?? [200, PLAN]
   const [analysisStatus, analysisBody] = overrides.analysis ?? [200, ANALYSIS]
   const fetchStub = vi.fn((url: string) => {
     if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => LIMITS })
     if (url.includes('/api/area/scan')) return Promise.resolve({ status: scanStatus, json: async () => scanBody })
+    if (url.includes('/api/area/plan')) return Promise.resolve({ status: planStatus, json: async () => planBody })
     if (url.includes('/api/area/analyze')) return Promise.resolve({ status: analysisStatus, json: async () => analysisBody })
     if (url.includes('/api/buildings/')) return Promise.resolve({ status: buildingStatus, json: async () => buildingBody })
     return Promise.resolve({ status: healthStatus, json: async () => healthBody })
@@ -395,6 +409,8 @@ it('does not call the model until the user asks for it', async () => {
   await screen.findByText('47%')
 
   expect(fetchStub.mock.calls.some((call) => String(call[0]).includes('/api/area/analyze'))).toBe(false)
+  // Ani o plan: on nie wola modelu, ale i tak nie ma po co pytac, dopoki nikt nie kliknal.
+  expect(fetchStub.mock.calls.some((call) => String(call[0]).includes('/api/area/plan'))).toBe(false)
   expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('brak')
 })
 
@@ -408,6 +424,92 @@ it('shows the model result and hands the map only the roofs above the threshold'
   // 42 i 77 sa powyzej progu 0,5; 99 z ocena 0,31 nie jest podejrzeniem i nie trafia na mape.
   expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
   expect(fetchStub.mock.calls.some((call) => String(call[0]).includes('/api/area/analyze'))).toBe(true)
+})
+
+/** Prostokat podzielony na dwa kawalki — tak jak prawdziwy plan obszaru z 691 budynkami. */
+const TWO_CHUNK_PLAN = {
+  chunks: [
+    { sw: DRAWN.sw, ne: { lat: DRAWN.ne.lat, lng: 21.08 }, buildings: 40 },
+    { sw: { lat: DRAWN.sw.lat, lng: 21.08 }, ne: DRAWN.ne, buildings: 36 },
+  ],
+  buildings: 74,
+  areaKm2: 0.6,
+  truncated: false,
+}
+
+/** Pierwszy kawalek: jeden niezgloszony dach z flaga. */
+const FIRST_CHUNK = {
+  stats: { ...ANALYSIS.stats, analysed: 1, noResult: 1, suspected: 1, suspectedNotListed: 1, suspectedListed: 0 },
+  buildings: [ANALYSIS.buildings[0]],
+  truncated: false,
+}
+
+/** Drugi kawalek: zgloszony dach z flaga, plus ten sam dach 42, ktory stoi na linii ciecia. */
+const SECOND_CHUNK = {
+  stats: { ...ANALYSIS.stats, analysed: 2, noResult: 0, suspected: 2, suspectedNotListed: 1, suspectedListed: 1 },
+  buildings: [ANALYSIS.buildings[1], ANALYSIS.buildings[0]],
+  truncated: false,
+}
+
+/**
+ * Backend z kawalkami rozwiazywanymi recznie: skan i plan wracaja od razu, a kazde `/analyze`
+ * czeka, dopoki test go nie odpowie. Bez tego nie da sie sprawdzic, co jest na ekranie POMIEDZY
+ * kawalkami — a wlasnie to jest cala rzecz, ktora tu dodajemy.
+ */
+function stubStreamingApi(plan: unknown) {
+  const queue: ((body: unknown) => void)[] = []
+  const fetchStub = vi.fn((url: string) => {
+    if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => LIMITS })
+    if (url.includes('/api/area/scan')) return Promise.resolve({ status: 200, json: async () => SCAN })
+    if (url.includes('/api/area/plan')) return Promise.resolve({ status: 200, json: async () => plan })
+    if (url.includes('/api/area/analyze')) {
+      return new Promise((resolve) => {
+        queue.push((body: unknown) => resolve({ status: 200, json: async () => body }))
+      })
+    }
+    if (url.includes('/api/buildings/')) return Promise.resolve({ status: 200, json: async () => BUILDING })
+    return Promise.resolve({ status: 200, json: async () => HEALTH })
+  })
+  vi.stubGlobal('fetch', fetchStub)
+  return {
+    chunksAsked: () => queue.length,
+    async answer(index: number, body: unknown) {
+      await act(async () => queue[index](body))
+    },
+  }
+}
+
+/**
+ * To jest powod, dla ktorego mapa nie wymagala zmian: dostaje `analysis.buildings`, a te rosna
+ * po kazdym kawalku. Pomaranczowe obrysy pojawiaja sie wiec kawalek po kawalku same.
+ */
+it('draws the roofs from the first chunk before the second one arrives', async () => {
+  const backend = stubStreamingApi(TWO_CHUNK_PLAN)
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+
+  // Plan wrocil, pierwszy kawalek jest u modelu, drugi jeszcze nie ruszyl.
+  await waitFor(() => expect(backend.chunksAsked()).toBe(1))
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('brak')
+
+  await backend.answer(0, FIRST_CHUNK)
+
+  // Obrys z pierwszego kawalka jest na mapie, zanim przyszedl drugi.
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42')
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('1')
+  expect(screen.getByText('These numbers cover 1 of 2 areas analysed so far.')).toBeDefined()
+  expect(backend.chunksAsked()).toBe(2)
+
+  await backend.answer(1, SECOND_CHUNK)
+
+  // Drugi kawalek doklada 77 i powtarza 42 z linii ciecia — na mapie jest raz.
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
+  expect(screen.queryByText(/These numbers cover/)).toBeNull()
+  expect(screen.getByText('Roofs analysed')).toBeDefined()
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('1')
 })
 
 /** Suwak progu w panelu — szukany po etykiecie, tak jak znalazlby go czytnik ekranu. */

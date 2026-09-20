@@ -20,6 +20,7 @@ from app.area_analysis import (
     BUILDING_FACTS_SQL,
     BuildingFacts,
     analysis_from_model,
+    chunk_fits,
     corners,
     count_buildings,
     model_limit_problem,
@@ -365,6 +366,19 @@ def test_the_gate_uses_the_limits_it_is_given_not_the_defaults() -> None:
     assert "has 120 buildings" in strict
     # Te same liczby przy wyzszych limitach nie sa juz problemem.
     assert model_limit_problem(5.0, 120, max_buildings=500, max_area_km2=10.0) is None
+
+
+@pytest.mark.parametrize("area_km2", [0.0, 1.0, MODEL_MAX_AREA_KM2 - 0.1, MODEL_MAX_AREA_KM2, MODEL_MAX_AREA_KM2 + 0.1])
+@pytest.mark.parametrize("buildings", [0, 1, MODEL_MAX_BUILDINGS - 1, MODEL_MAX_BUILDINGS, MODEL_MAX_BUILDINGS + 1])
+def test_the_planner_and_the_gate_agree_on_every_boundary(area_km2: float, buildings: int) -> None:
+    """`chunk_fits` (podzial na kawalki z /area/plan) i `model_limit_problem` (bramka /area/analyze)
+    musza odpowiadac na to samo pytanie identycznie, takze dokladnie na granicy.
+
+    Gdyby planista byl luzniejszy, oddawalby kawalki, ktore `/area/analyze` odrzuci wlasnym 400 —
+    front wyswietlilby blad w polowie analizy obszaru. Gdyby byl ostrzejszy (`<` zamiast `<=`),
+    mnozylby zapytania do modelu za nic: kazde to kilkadziesiat sekund inferencji na CPU.
+    """
+    assert chunk_fits(area_km2, buildings) is (model_limit_problem(area_km2, buildings) is None)
 
 
 # --- zapytania do bazy -------------------------------------------------------------------------------

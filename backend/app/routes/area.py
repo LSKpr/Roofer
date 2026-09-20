@@ -16,10 +16,13 @@ from app.area import (
 )
 from app.area_analysis import (
     AreaAnalysis,
+    AreaChunk,
+    AreaPlan,
     analysis_from_model,
     corners,
     count_buildings,
     model_limit_problem,
+    plan_chunks,
     read_building_facts,
 )
 from app.prediction import (
@@ -142,6 +145,33 @@ class AnalysisResponse(Camel):
     truncated: bool
 
 
+class PlanChunk(Camel):
+    """Jeden prostokat gotowy do wyslania do `/area/analyze`, w tym samym ksztalcie co wejscie.
+
+    Bez pola z powierzchnia: front ma ja z wlasnej geometrii, a drugie zrodlo tej samej liczby to
+    kolejne miejsce, ktore moze sie rozjechac. `buildings` jest tu po to, zeby dalo sie pokazac
+    postep („kawalek 3 z 7, 421 budynkow") i oszacowac czas — liczy ja bramka tym samym zapytaniem.
+    """
+
+    sw: Coordinates
+    ne: Coordinates
+    buildings: int
+
+
+class PlanResponse(Camel):
+    """`buildings` i `areaKm2` dotycza CALEGO zaznaczenia, nie sumy kawalkow.
+
+    Suma `chunks[].buildings` jest wieksza albo rowna `buildings`, bo budynek na granicy dwoch
+    kawalkow wpada do obu — front deduplikuje wyniki po `id`. `truncated` znaczy „podzial przerwano,
+    czesc zaznaczenia nie ma swojego kawalka", a nie „lista jest przycieta na koncu".
+    """
+
+    chunks: list[PlanChunk]
+    buildings: int
+    area_km2: float
+    truncated: bool
+
+
 def to_bounding_box(body: ScanRequest) -> BoundingBox:
     return BoundingBox(south=body.sw.lat, west=body.sw.lng, north=body.ne.lat, east=body.ne.lng)
 
@@ -203,6 +233,23 @@ def to_analysis_response(analysis: AreaAnalysis) -> AnalysisResponse:
     )
 
 
+def to_plan_chunk(chunk: AreaChunk) -> PlanChunk:
+    return PlanChunk(
+        sw=Coordinates(lng=chunk.bbox.west, lat=chunk.bbox.south),
+        ne=Coordinates(lng=chunk.bbox.east, lat=chunk.bbox.north),
+        buildings=chunk.buildings,
+    )
+
+
+def to_plan_response(plan: AreaPlan) -> PlanResponse:
+    return PlanResponse(
+        chunks=[to_plan_chunk(chunk) for chunk in plan.chunks],
+        buildings=plan.buildings,
+        area_km2=plan.area_km2,
+        truncated=plan.truncated,
+    )
+
+
 def model_limits(settings: Any) -> tuple[int, float]:
     """Limity uruchomionej uslugi modelu. Jedno miejsce, z ktorego czytaja je bramka i endpoint
     limitow — inaczej front pokazywalby inna liczbe, niz blokuje backend."""
@@ -239,6 +286,42 @@ async def scan(body: ScanRequest, request: Request) -> ScanResponse:
     except Exception as error:  # padnieta baza to 503, nie 500 z tracebackiem
         raise HTTPException(status_code=503, detail=DATABASE_DOWN) from error
     return to_response(result)
+
+
+@router.post("/area/plan", response_model=PlanResponse, responses={400: {}, 503: {}})
+async def plan(body: ScanRequest, request: Request) -> PlanResponse:
+    """Prostokat na kawalki, z ktorych kazdy przejdzie bramke `/area/analyze`.
+
+    Po co to jest: skan rejestru przepuszcza 25 km², a model 500 budynkow i 10 km², wiec obszar,
+    ktory uzytkownik wlasnie zeskanowal, regularnie nie wchodzi do modelu w jednym zapytaniu.
+    Zamiast kazac mu zgadywac, gdzie postawic mniejszy prostokat, oddajemy gotowa liste — front
+    wysyla ja do `/area/analyze` kawalek po kawalku i pokazuje wyniki w miare splywania.
+
+    **Ten endpoint nie wola modelu.** Kosztuje tylko liczniki budynkow z PostGIS-a: jeden na caly
+    prostokat i po dwa na kazde ciecie. Dlatego nie sprawdza tez, czy model jest podlaczony — plan
+    ma sens takze wtedy, gdy usluga chwilowo nie odpowiada.
+
+    Limitu 25 km² tu nie ma i nie ma go celowo: front wola te trase po udanym skanie, a wiekszy
+    prostokat po prostu rozpada sie na wiecej kawalkow. Sprawdzamy sam ksztalt zaznaczenia, bo
+    prostokat z odwroconymi naroznikami nie ma srodka, ktorym mozna go przeciac.
+    """
+    bbox = to_bounding_box(body)
+    problem = bbox_problem(bbox)
+    if problem is not None:
+        raise HTTPException(status_code=400, detail=problem)
+
+    settings = request.app.state.settings
+    pool = request.app.state.pool
+    max_buildings, max_area_km2 = model_limits(settings)
+
+    async def counter(box: BoundingBox) -> int:
+        return await count_buildings(pool, box, settings.database_timeout_s)
+
+    try:
+        result = await plan_chunks(bbox, counter, max_buildings, max_area_km2)
+    except Exception as error:  # padnieta baza to 503 z komunikatem, nigdy 500 z tracebackiem
+        raise HTTPException(status_code=503, detail=DATABASE_DOWN) from error
+    return to_plan_response(result)
 
 
 @router.post("/area/analyze", response_model=AnalysisResponse, responses={400: {}, 503: {}})

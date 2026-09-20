@@ -1,14 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import type {
-  AreaAnalysis,
-  AreaAnalysisStats,
-  AreaModelLimits,
-  AreaScan,
-  AreaStats,
-  ListedBuilding,
-  SuspectedRoof,
-} from '../api/client'
+import type { AreaAnalysis, AreaAnalysisStats, AreaScan, AreaStats, ListedBuilding, SuspectedRoof } from '../api/client'
+import type { AreaAnalysisProgress } from '../hooks/useAreaAnalysis'
 import { ScanPanel } from './ScanPanel'
 
 /** Liczby z prawdziwego skanu bboxa 2×2 km pod Zwoleniem. */
@@ -45,10 +38,7 @@ function aScan(overrides: Partial<AreaScan> = {}): AreaScan {
   }
 }
 
-/** Prawdziwe limity tamtego serwisu: 100 budynkow i 4 km2 na zadanie. */
-const MODEL_LIMITS: AreaModelLimits = { maxBuildings: 100, maxAreaKm2: 4 }
-
-/** Skan, ktory miesci sie w limitach modelu: 74 budynki pod Zwoleniem. */
+/** Skan, ktory miesci sie w budzecie czasu z zapasem: 74 budynki pod Zwoleniem. */
 function aSmallScan(overrides: Partial<AreaScan> = {}): AreaScan {
   return aScan({
     stats: someStats({
@@ -119,8 +109,9 @@ type PanelOptions = {
   analysis?: AreaAnalysis | null
   analysisLoading?: boolean
   analysisError?: string | null
+  analysisProgress?: AreaAnalysisProgress | null
+  analysisSkipped?: boolean
   onAnalyse?: () => void
-  modelLimits?: AreaModelLimits | null
   threshold?: number | null
   onThresholdChange?: (value: number) => void
 }
@@ -136,8 +127,9 @@ function renderPanel(scan: AreaScan | null, options: PanelOptions = {}) {
       analysis={options.analysis ?? null}
       analysisLoading={options.analysisLoading ?? false}
       analysisError={options.analysisError ?? null}
+      analysisProgress={options.analysisProgress ?? null}
+      analysisSkipped={options.analysisSkipped ?? false}
       onAnalyse={options.onAnalyse ?? (() => {})}
-      modelLimits={'modelLimits' in options ? (options.modelLimits ?? null) : MODEL_LIMITS}
       threshold={options.threshold ?? null}
       onThresholdChange={options.onThresholdChange ?? (() => {})}
     />,
@@ -157,6 +149,11 @@ function thresholdSlider(): HTMLInputElement {
 /** Wartosc wiersza po jego etykiecie: te same male liczby powtarzaja sie w panelu kilka razy. */
 function rowValue(label: string): string {
   return screen.getByText(label).nextElementSibling?.textContent ?? ''
+}
+
+/** Wiersze listy niezgloszonych dachow z flaga: to przyciski tej sekcji, w kolejnosci z ekranu. */
+function flaggedRows(): HTMLElement[] {
+  return within(screen.getByTestId('flagged-roofs')).getAllByRole('button')
 }
 
 it('prowadzi udzialem zgloszonych w procentach i surowymi liczbami pod nim', () => {
@@ -358,32 +355,44 @@ it('daje przycisk analizy dopiero wtedy, gdy jest wynik skanu', () => {
   expect(analyseButton().disabled).toBe(false)
 })
 
-// Liczbe budynkow znamy z wyniku skanu, wiec powod odmowy stoi przy przycisku, zanim
-// uzytkownik w niego kliknie i zanim model odeslalby 400.
-it('wylacza przycisk i podaje liczbe budynkow, gdy obszar przekracza limit modelu', () => {
+// Limit 500 budynkow przestal byc granica: obszar wiekszy niz jedno zadanie modelu dzieli sie na
+// kawalki. 1 338 budynkow (i 4 km²) to dzis zwykly obszar do analizy, a nie odmowa.
+it('nie blokuje obszaru, ktory nie miesci sie w jednym zadaniu modelu', () => {
   const onAnalyse = vi.fn()
-  renderPanel(aScan(), { onAnalyse })
+  renderPanel(aScan({ areaKm2: 6.3 }), { onAnalyse })
+
+  expect(analyseButton().disabled).toBe(false)
+  expect(screen.queryByText(/The model accepts up to/)).toBeNull()
+  expect(screen.queryByText(/km²; this selection is/)).toBeNull()
+
+  fireEvent.click(analyseButton())
+  expect(onAnalyse).toHaveBeenCalledTimes(1)
+})
+
+// Liczbe budynkow znamy z wyniku skanu, wiec powod odmowy stoi przy przycisku, zanim uzytkownik
+// w niego kliknie. Granica jest jedna i jest nia czas: 2 000 dachow to poltorej do czterech minut,
+// a 10 631 budynkow z centrum Warszawy to kwadranse.
+it('wylacza przycisk i podaje liczbe dachow, gdy obszar przekracza budzet czasu', () => {
+  const onAnalyse = vi.fn()
+  const centreOfWarsaw = someStats({ total: 10631, listed: 11, notListed: 10620, listedShare: 0.001 })
+  renderPanel(aScan({ stats: centreOfWarsaw, areaKm2: 24.2 }), { onAnalyse })
 
   expect(analyseButton().disabled).toBe(true)
-  expect(screen.getByText('The model accepts up to 100 buildings; this area has 1,338.')).toBeDefined()
+  expect(screen.getByText('The model can analyse up to 2,000 roofs in one go; this area has 10,631.')).toBeDefined()
 
   fireEvent.click(analyseButton())
   expect(onAnalyse).not.toHaveBeenCalled()
 })
 
-it('wylacza przycisk takze wtedy, gdy za duza jest sama powierzchnia', () => {
-  renderPanel(aSmallScan({ areaKm2: 6.3 }))
-
-  expect(analyseButton().disabled).toBe(true)
-  expect(screen.getByText('The model accepts up to 4.0 km²; this selection is 6.3 km².')).toBeDefined()
-})
-
-// Limity zna backend. Gdy ich nie poda, front nie zgaduje wlasnych: pyta i pokazuje odpowiedz.
-it('nie blokuje przycisku, gdy backend nie podal limitow modelu', () => {
-  renderPanel(aScan(), { modelLimits: null })
-
+// Granica jest granica, a nie „okolo": 2 000 dachow jeszcze przechodzi, 2 001 juz nie.
+it('przepuszcza obszar dokladnie na granicy budzetu', () => {
+  renderPanel(aScan({ stats: someStats({ total: 2000, listed: 10, notListed: 1990, listedShare: 0.005 }) }))
   expect(analyseButton().disabled).toBe(false)
-  expect(screen.queryByText(/The model accepts up to/)).toBeNull()
+
+  renderPanel(aScan({ stats: someStats({ total: 2001, listed: 10, notListed: 1991, listedShare: 0.005 }) }))
+  const buttons = screen.getAllByText('Analyse roofs with the model') as HTMLButtonElement[]
+  expect(buttons[1].disabled).toBe(true)
+  expect(screen.getByText('The model can analyse up to 2,000 roofs in one go; this area has 2,001.')).toBeDefined()
 })
 
 it('wola onAnalyse po kliknieciu w przycisk', () => {
@@ -409,6 +418,120 @@ it('odmienia liczbe dachow w stanie pracy', () => {
   })
 
   expect(screen.getByText('Analysing 1 roof…')).toBeDefined()
+})
+
+/** Skan obszaru, ktory dzieli sie na kilka kawalkow: 691 budynkow pod Zwoleniem. */
+function aStreamedScan(overrides: Partial<AreaScan> = {}): AreaScan {
+  return aScan({
+    stats: someStats({ total: 691, listed: 12, notListed: 679, listedShare: 0.017 }),
+    areaKm2: 0.686,
+    ...overrides,
+  })
+}
+
+// Bez tej linii panel mowilby „Analysing 691 roofs…" przez kilka minut, nie pokazujac, ze czesc
+// obszaru jest juz policzona.
+it('pokazuje, ktory kawalek idzie teraz i ile dachow juz ocenil', () => {
+  renderPanel(aStreamedScan(), {
+    analysisLoading: true,
+    analysisProgress: { done: 2, total: 7, buildings: 214 },
+  })
+
+  expect(screen.getByText('Analysing area 3 of 7 · 214 roofs so far')).toBeDefined()
+  // Szacunek czasu zostaje obok postepu: to on mowi, na ile jeszcze usiasc.
+  expect(screen.getByText('up to about 2 min')).toBeDefined()
+})
+
+// Przed pierwsza ocena nie ma czego liczyc, a „0 roofs so far" nie jest informacja.
+it('nie podaje liczby dachow, dopoki zadna ocena nie splynela', () => {
+  renderPanel(aStreamedScan(), { analysisLoading: true, analysisProgress: { done: 0, total: 7, buildings: 0 } })
+
+  expect(screen.getByText('Analysing area 1 of 7…')).toBeDefined()
+  expect(screen.queryByText(/roofs so far/)).toBeNull()
+})
+
+// Caly sens strumieniowania: liczby i lista sa widoczne, zanim skonczy sie caly obszar.
+it('pokazuje liczby i liste juz w trakcie pracy', () => {
+  renderPanel(aStreamedScan(), {
+    analysisLoading: true,
+    analysis: anAnalysis(),
+    analysisProgress: { done: 3, total: 7, buildings: 214 },
+  })
+
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
+  expect(screen.getByTestId('flagged-roofs')).toBeDefined()
+  expect(screen.getByText('Analysing area 4 of 7 · 214 roofs so far')).toBeDefined()
+})
+
+// Czesciowe „14" bez tego zdania czyta sie jak wynik koncowy calego zaznaczenia.
+it('mowi przy niepelnym wyniku, jakiej czesci obszaru dotycza liczby', () => {
+  renderPanel(aStreamedScan(), {
+    analysisLoading: true,
+    analysis: anAnalysis(),
+    analysisProgress: { done: 3, total: 7, buildings: 214 },
+  })
+
+  expect(screen.getByText('These numbers cover 3 of 7 areas analysed so far.')).toBeDefined()
+})
+
+// Po ostatnim kawalku liczby dotycza calego obszaru, wiec zdanie o czesci musi zniknac — inaczej
+// samo podwazaloby kompletny wynik.
+it('nie mowi o czesci obszaru, gdy wrocily wszystkie kawalki', () => {
+  renderPanel(aStreamedScan(), {
+    analysis: anAnalysis(),
+    analysisProgress: { done: 7, total: 7, buildings: 640 },
+  })
+
+  expect(screen.queryByText(/These numbers cover/)).toBeNull()
+  expect(screen.queryByText(/Analysing area/)).toBeNull()
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
+})
+
+// Blad kawalka nie wyrzuca dotychczasowej pracy: liczby zostaja, komunikat stoi nad nimi,
+// a zdanie o czesci obszaru tlumaczy, ile z niego zdazylo sie policzyc.
+it('zostawia niepelny wynik z komunikatem bledu i zdaniem o czesci obszaru', () => {
+  renderPanel(aStreamedScan(), {
+    analysis: anAnalysis(),
+    analysisError: 'The model is not responding.',
+    analysisProgress: { done: 2, total: 7, buildings: 180 },
+  })
+
+  expect(screen.getByText('The model is not responding.')).toBeDefined()
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
+  expect(screen.getByText('These numbers cover 2 of 7 areas analysed so far.')).toBeDefined()
+  // Przycisk nie wraca, dopoki na ekranie stoi wynik — inaczej klik zaczynalby caly obszar od zera.
+  expect(screen.queryByText('Analyse roofs with the model')).toBeNull()
+})
+
+// Fragment bez swojego kawalka nie zostal obejrzany wcale — brak pomaranczowych obrysow w tym
+// miejscu wygladalby jak wynik modelu.
+it('mowi wprost, ze czesc zaznaczenia byla za gesta i zostala pominieta', () => {
+  renderPanel(aStreamedScan(), { analysis: anAnalysis(), analysisSkipped: true })
+
+  expect(screen.getByText(/Part of this selection is too dense to split into areas the model accepts/)).toBeDefined()
+  expect(screen.getByText(/the model never looked at those roofs, and no orange there is not a result/)).toBeDefined()
+})
+
+it('nie wspomina o pominietej czesci, gdy plan objal cale zaznaczenie', () => {
+  renderPanel(aStreamedScan(), { analysis: anAnalysis(), analysisProgress: { done: 7, total: 7, buildings: 640 } })
+
+  expect(screen.queryByText(/too dense/)).toBeNull()
+})
+
+// Ten sam straznik slownictwa, co wyzej, ale na stanie czesciowym: to on pokazuje liczby, ktore
+// jeszcze nie opisuja calego obszaru, wiec najlatwiej zsunalby sie w „tu azbestu nie ma".
+it('nie uzywa slownictwa sugerujacego pomiar azbestu przy niepelnym wyniku', () => {
+  const view = renderPanel(aStreamedScan(), {
+    analysisLoading: true,
+    analysis: anAnalysis(),
+    analysisProgress: { done: 3, total: 7, buildings: 214 },
+    analysisSkipped: true,
+  })
+
+  const text = view.container.textContent ?? ''
+  expect(text).not.toMatch(/detected asbestos|asbestos-free|no asbestos|safe|clean roof/i)
+  // Straznik nie moze przechodzic na pustym panelu: zdanie o czesci obszaru musi tam byc.
+  expect(text).toMatch(/These numbers cover 3 of 7 areas analysed so far/)
 })
 
 // Najwazniejsza liczba w calej aplikacji: dachy, ktorych nikt nie zglosil, a model cos na nich widzi.
@@ -672,4 +795,133 @@ it('przy duzym obszarze podaje szacunek w minutach, nie w setkach sekund', () =>
   renderPanel(thousand, { analysisLoading: true })
 
   expect(screen.getByText('up to about 3 min')).toBeDefined()
+})
+
+// Wlasciwy produkt tej aplikacji: liczba „14" mowi o skali, a te wiersze da sie objechac.
+it('wypisuje niezgloszone dachy z flaga: ocena, powierzchnia i identyfikator OSM', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  // Pierwszy wiersz to jeden z trzynastu dachow z ocena 0,72 i powierzchnia 150 m².
+  expect(flaggedRows()[0].textContent).toBe('72%150 m²OSM 200')
+  // Ostatni to ten z ocena 0,66 — najnizsza nad progiem.
+  expect(flaggedRows()[13].textContent).toBe('66%182 m²OSM 300')
+})
+
+// Zgloszony dach na tej liscie zamienilby ja w donos na kogos, kto wlasnie zglosil swoj azbest.
+it('nie wpuszcza na liste ani zgloszonego dachu, ani oceny ponizej progu', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  const section = screen.getByTestId('flagged-roofs')
+
+  expect(flaggedRows()).toHaveLength(14)
+  // 100 i 101 maja najwyzsza ocene (0,81), ale sa w rejestrze.
+  expect(within(section).queryByText('OSM 100')).toBeNull()
+  expect(within(section).queryByText('OSM 101')).toBeNull()
+  expect(within(section).queryByText('81%')).toBeNull()
+  // 500 jest poza rejestrem, ale z ocena 0,18 nie jest podejrzeniem.
+  expect(within(section).queryByText('OSM 500')).toBeNull()
+})
+
+// Naglowek listy i liczba prowadzaca licza to samo z tego samego progu — inaczej panel obiecywalby
+// inna liczbe dachow, niz da sie policzyc wierszami.
+it('liczba w naglowku listy zgadza sie z liczba prowadzaca', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
+  expect(screen.getByText('Not in the register, flagged by the model (14)')).toBeDefined()
+})
+
+it('sortuje liste malejaco po ocenie, bo gora listy to pierwszy wyjazd', () => {
+  const mixed = anAnalysis({
+    buildings: [
+      ...someRoofs({ count: 1, probability: 0.55, areaM2: 110, firstId: 900 }),
+      ...someRoofs({ count: 1, probability: 0.91, areaM2: 120, firstId: 901 }),
+      ...someRoofs({ count: 1, probability: 0.7, areaM2: 130, firstId: 902 }),
+    ],
+  })
+
+  renderPanel(aSmallScan(), { analysis: mixed })
+
+  expect(flaggedRows().map((row) => row.textContent)).toEqual([
+    '91%120 m²OSM 901',
+    '70%130 m²OSM 902',
+    '55%110 m²OSM 900',
+  ])
+})
+
+// Wiersz jest droga do karty budynku: tam jest wycinek ortofoto i pelna nota modelu.
+it('otwiera karte budynku identyfikatorem z klikniętego wiersza', () => {
+  const onPickBuilding = vi.fn()
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), onPickBuilding })
+
+  fireEvent.click(within(screen.getByTestId('flagged-roofs')).getByText('OSM 300'))
+
+  expect(onPickBuilding).toHaveBeenCalledTimes(1)
+  expect(onPickBuilding).toHaveBeenCalledWith(300)
+})
+
+// Suwak dziala na liste natychmiast i bez zapytania do modelu: wybor idzie z ocen, ktore panel
+// juz ma w rece.
+it('skraca liste, gdy prog idzie w gore', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.7 })
+
+  expect(flaggedRows()).toHaveLength(13)
+  expect(screen.getByText('Not in the register, flagged by the model (13)')).toBeDefined()
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('13')
+  // Dach z ocena 0,66 wypadl razem z podniesieniem progu.
+  expect(within(screen.getByTestId('flagged-roofs')).queryByText('OSM 300')).toBeNull()
+})
+
+it('wydluza liste, gdy prog idzie w dol, i przycina ja do dwudziestu pieciu wierszy', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.15 })
+
+  // Prog 0,15 doklada czterdziesci siedem dachow z ocena 0,18: 61 niezgloszonych z flaga.
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('61')
+  expect(screen.getByText('Not in the register, flagged by the model (61)')).toBeDefined()
+  expect(flaggedRows()).toHaveLength(25)
+  expect(screen.getByText(/showing 25 of 61 roofs/)).toBeDefined()
+  expect(screen.getByText(/the numbers above cover the whole area/)).toBeDefined()
+})
+
+// Pusta lista to stan progu, nie werdykt o obszarze — wiec mowi zdanie, a nie zostawia pustke.
+it('przy progu nad wszystkimi ocenami mowi zdanie zamiast pustej listy', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 1 })
+
+  expect(screen.getByText('Not in the register, flagged by the model (0)')).toBeDefined()
+  expect(screen.getByText(/No roof here is both above the threshold and missing from the register/)).toBeDefined()
+  expect(within(screen.getByTestId('flagged-roofs')).queryAllByRole('button')).toHaveLength(0)
+})
+
+// Lista opisuje wynik modelu, wiec bez wyniku nie ma jej o czym wypisywac.
+it('daje liste niezgloszonych dachow dopiero razem z wynikiem modelu', () => {
+  renderPanel(aSmallScan())
+  renderPanel(aSmallScan(), { analysisLoading: true })
+  expect(screen.queryAllByTestId('flagged-roofs')).toHaveLength(0)
+
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+  expect(screen.queryAllByTestId('flagged-roofs')).toHaveLength(1)
+})
+
+// Ta lista najlatwiej w calej aplikacji zsuwa sie z „model cos widzi na zdjeciu" na „wykryto
+// azbest", wiec straznik slownictwa stoi tez na samej sekcji.
+it('nie uzywa slownictwa sugerujacego pomiar azbestu w liscie niezgloszonych dachow', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.15 })
+
+  const section = screen.getByTestId('flagged-roofs').textContent ?? ''
+
+  expect(section).not.toMatch(/detected asbestos|asbestos-free|no asbestos|safe|clean roof/i)
+  // Sekcja nie moze byc pusta, bo wtedy straznik przechodzilby na niczym.
+  expect(section).toMatch(/Roofs to check on site, sorted by score/)
+})
+
+it('mowi przy liscie, skad bierze sie ocena i czego brak w rejestrze nie znaczy', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  const section = within(screen.getByTestId('flagged-roofs'))
+
+  expect(section.getByText(/only compares how the covering looks on a satellite photo/)).toBeDefined()
+  expect(section.getByText(/some of these roofs will not have asbestos cement on them/)).toBeDefined()
+  expect(section.getByText(/Missing from the register means nobody reported this building/)).toBeDefined()
+  expect(section.getByText(/not that anything is unlawful/)).toBeDefined()
+  expect(section.getByText('This is a list to check on site, not a list of findings.')).toBeDefined()
 })

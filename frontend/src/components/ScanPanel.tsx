@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
-import type { AreaAnalysis, AreaModelLimits, AreaScan, ListedBuilding } from '../api/client'
-import { recountStats } from '../lib/modelStats'
+import type { AreaAnalysis, AreaScan, ListedBuilding } from '../api/client'
+import type { AreaAnalysisProgress } from '../hooks/useAreaAnalysis'
+import { recountStats, selectFlaggedNotListed } from '../lib/modelStats'
+import { FlaggedRoofs } from './FlaggedRoofs'
 import { ThresholdSlider } from './ThresholdSlider'
 
 type ScanPanelProps = {
@@ -9,13 +11,18 @@ type ScanPanelProps = {
   error: string | null
   onClose: () => void
   onPickBuilding: (id: number) => void
-  /** Wynik modelu dla tego samego prostokata; `null`, dopoki nikt nie zlecil analizy. */
+  /**
+   * Wynik modelu dla tego samego prostokata; `null`, dopoki nikt nie zlecil analizy. W trakcie
+   * pracy jest tu wynik CZESCIOWY — scalony z kawalkow, ktore juz splynely.
+   */
   analysis: AreaAnalysis | null
   analysisLoading: boolean
   analysisError: string | null
+  /** Postep analizy kawalek po kawalku; `null`, dopoki nie ma planu. */
+  analysisProgress: AreaAnalysisProgress | null
+  /** Plan pominal fragment zaznaczenia, bo byl za gesty na podzial — panel musi to powiedziec. */
+  analysisSkipped: boolean
   onAnalyse: () => void
-  /** Limity modelu z backendu; `null`, gdy backend ich nie poda — wtedy nie blokujemy przycisku. */
-  modelLimits: AreaModelLimits | null
   /**
    * Prog podejrzenia wybrany suwakiem; `null` znaczy „nikt go nie ruszal" i wtedy obowiazuje prog
    * z odpowiedzi modelu. Stan trzyma `App`, bo ten sam prog filtruje obrysy na mapie.
@@ -134,23 +141,65 @@ function waitLabel(roofs: number): string {
 }
 
 /**
- * Powod, dla ktorego model nie przyjmie tego obszaru — albo `null`, gdy przyjmie.
+ * Ile dachow wolno przepuscic przez model w jednym zleceniu.
  *
- * Liczba budynkow jest znana z wyniku skanu, a powierzchnia z tego samego wyniku, wiec powod da
- * sie podac przed kliknieciem. Limity pochodza z backendu: bez nich nie blokujemy przycisku,
- * bo zgadywanie cudzych limitow konczy sie blokada tam, gdzie zapytanie by przeszlo.
+ * Limitow uslugi (500 budynkow, 10 km² na zadanie) nie ma tu wcale i nie przez pomylke: obszar
+ * idzie do modelu kawalek po kawalku, a podzial na kawalki mieszczace sie w tych limitach robi
+ * backend (`/api/area/plan`). Wiekszy prostokat nie jest wiec „nie do przyjecia", tylko rozpada
+ * sie na wiecej kawalkow.
+ *
+ * Zostaje jedna granica i jest nia czas: przy 40-115 ms na dach 2 000 dachow to od poltorej do
+ * czterech minut, co jeszcze da sie przeczekac przy otwartym panelu. 10 631 budynkow z centrum
+ * Warszawy to kwadranse i na to nie pozwalamy — lepiej odmowic z liczba w rece niz zajac model
+ * na pol godziny zleceniem, ktore nikt nie doczeka do konca.
  */
-function limitReason(scan: AreaScan, limits: AreaModelLimits | null): string | null {
-  if (limits === null) return null
-  if (scan.stats.total > limits.maxBuildings) {
-    const max = NUMBER_FORMAT.format(limits.maxBuildings)
-    return `The model accepts up to ${max} buildings; this area has ${NUMBER_FORMAT.format(scan.stats.total)}.`
-  }
-  if (scan.areaKm2 > limits.maxAreaKm2) {
-    return `The model accepts up to ${km2Label(limits.maxAreaKm2)}; this selection is ${km2Label(scan.areaKm2)}.`
-  }
-  return null
+const MAX_STREAM_ROOFS = 2000
+
+/**
+ * Powod, dla ktorego nie zlecamy analizy tego obszaru — albo `null`, gdy zlecamy.
+ *
+ * Liczba budynkow jest znana z wyniku skanu, wiec powod stoi przy wylaczonym przycisku, zanim
+ * padnie klikniecie.
+ */
+function budgetReason(scan: AreaScan): string | null {
+  if (scan.stats.total <= MAX_STREAM_ROOFS) return null
+  const max = NUMBER_FORMAT.format(MAX_STREAM_ROOFS)
+  return `The model can analyse up to ${max} roofs in one go; this area has ${NUMBER_FORMAT.format(scan.stats.total)}.`
 }
+
+/**
+ * Linia postepu w trakcie pracy: ktory kawalek idzie teraz i ile dachow model juz ocenil.
+ *
+ * Numer kawalka liczy sie jako `done + 1`, bo w trakcie pracy nad trzecim kawalkiem wrocily dwa.
+ * Dachow nie pokazujemy, dopoki nie ma ani jednej oceny — „0 roofs so far" nie jest informacja.
+ */
+function progressLabel(progress: AreaAnalysisProgress): string {
+  const areas = `Analysing area ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`
+  return progress.buildings > 0 ? `${areas} · ${roofsLabel(progress.buildings)} so far` : `${areas}…`
+}
+
+/**
+ * Zdanie przy niepelnym wyniku — obowiazkowe.
+ *
+ * Liczby i lista pokazuja sie w trakcie i o to w tym calym strumieniowaniu chodzi, ale czesciowe
+ * „120 flagged" bez tego zdania czyta sie jak wynik koncowy calego zaznaczenia, czyli jest
+ * klamstwem o tym, ile dachow obejrzano.
+ */
+function partialNote(progress: AreaAnalysisProgress): string {
+  return `These numbers cover ${progress.done} of ${progress.total} areas analysed so far.`
+}
+
+/** Wynik jest niepelny, dopoki nie wrocil kazdy kawalek z planu — takze wtedy, gdy przerwal go blad. */
+function isPartial(progress: AreaAnalysisProgress | null): progress is AreaAnalysisProgress {
+  return progress !== null && progress.done < progress.total
+}
+
+/**
+ * Fragment zaznaczenia bez swojego kawalka. Model nigdy na niego nie spojrzal, wiec brak
+ * pomaranczowych obrysow w tym miejscu nie jest wynikiem — bez tego zdania wygladalby jak wynik.
+ */
+const SKIPPED_NOTE =
+  'Part of this selection is too dense to split into areas the model accepts, so it was skipped: the model never looked at those roofs, and no orange there is not a result.'
 
 /** Brak oceny to nie jest ocena „nic nie widac" — bez tego zdania zera w tabeli klamia. */
 function noResultNote(count: number): string {
@@ -193,12 +242,16 @@ const TRUNCATED_THRESHOLD_NOTE =
 /** Liczby modelu w kolejnosci czytania: najpierw niezgloszone z flaga, potem cala reszta. */
 function ModelNumbers({
   analysis,
+  progress,
   threshold,
   onThresholdChange,
+  onPickBuilding,
 }: {
   analysis: AreaAnalysis
+  progress: AreaAnalysisProgress | null
   threshold: number | null
   onThresholdChange: (value: number) => void
+  onPickBuilding: (id: number) => void
 }) {
   // Wszystko, co zalezy od progu, liczy sie tutaj z ocen pojedynczych budynkow — model nie jest
   // pytany po raz drugi, bo tamta instancja przyjmuje 10 zapytan na minute i jedno naraz.
@@ -224,6 +277,10 @@ function ModelNumbers({
         </span>
       </p>
       <p className="label-micro mt-1.5">Not in the register, flagged by the model</p>
+
+      {/* Zdanie o czesci obszaru stoi przy liczbie prowadzacej, nie w przypisach: to ona najbardziej
+          klamie, gdy wyglada na policzona z calosci. */}
+      {isPartial(progress) ? <p className="mt-2 text-xs text-ink-muted">{partialNote(progress)}</p> : null}
 
       <dl className="mt-3">
         <Row label="Roofs analysed" value={NUMBER_FORMAT.format(stats.analysed)} />
@@ -253,6 +310,15 @@ function ModelNumbers({
           </>
         ) : null}
       </div>
+
+      {/* Konkrety pod skala: te same dachy, ktore liczy `suspectedNotListed`, tylko po jednym.
+          Wybor idzie tym samym progiem, ktorym policzone sa liczby wyzej (`stats.threshold`),
+          wiec suwak skraca i wydluza te liste natychmiast i bez pytania modelu drugi raz. */}
+      <FlaggedRoofs
+        roofs={selectFlaggedNotListed(analysis, stats.threshold)}
+        total={stats.suspectedNotListed}
+        onPick={onPickBuilding}
+      />
     </div>
   )
 }
@@ -260,41 +326,71 @@ function ModelNumbers({
 /**
  * Ocena modelu dla calego obszaru: osobny krok, nie automat po skanie.
  *
- * Model ma twarde limity i liczy kilka sekund, wiec uzytkownik decyduje, czy go uruchomic —
- * a gdy obszar sie nie miesci, powod stoi przy wylaczonym przycisku, zanim padnie klikniecie.
+ * Obszar idzie do modelu kawalek po kawalku, a liczby i lista pokazuja sie w miare splywania
+ * wynikow — dlatego stan pracy i wynik wystepuja tu RAZEM, a nie jeden zamiast drugiego. Przy
+ * niepelnym wyniku obok liczb stoi zdanie, jakiej czesci obszaru dotycza.
+ *
+ * Model liczy minuty, wiec uruchomienie jest decyzja uzytkownika; gdy obszar przekracza budzet
+ * czasu, powod stoi przy wylaczonym przycisku, zanim padnie klikniecie.
  */
 function ModelSection({
   scan,
   analysis,
   loading,
   error,
+  progress,
+  skipped,
   onAnalyse,
-  modelLimits,
   threshold,
   onThresholdChange,
+  onPickBuilding,
 }: {
   scan: AreaScan
   analysis: AreaAnalysis | null
   loading: boolean
   error: string | null
+  progress: AreaAnalysisProgress | null
+  skipped: boolean
   onAnalyse: () => void
-  modelLimits: AreaModelLimits | null
   threshold: number | null
   onThresholdChange: (value: number) => void
+  onPickBuilding: (id: number) => void
 }) {
-  const reason = limitReason(scan, modelLimits)
+  const reason = budgetReason(scan)
 
   return (
     <Section title="Model analysis">
+      {/* Praca idzie minutami; bez tej linii panel wyglada na zepsuty, a przy kilku kawalkach
+          sama liczba dachow nie mowilaby, ile z obszaru jest juz za nami. */}
       {loading ? (
-        // Zadanie trwa od kilku sekund do ponad minuty; bez tego zdania panel wyglada na zepsuty.
-        <div>
-          <p className="text-ink-muted">Analysing {roofsLabel(scan.stats.total)}…</p>
+        <div className="mb-3">
+          <p className="text-ink-muted">
+            {progress === null || progress.total === 0
+              ? `Analysing ${roofsLabel(scan.stats.total)}…`
+              : progressLabel(progress)}
+          </p>
           <p className="label-micro mt-1">{waitLabel(scan.stats.total)}</p>
         </div>
-      ) : analysis ? (
-        <ModelNumbers analysis={analysis} threshold={threshold} onThresholdChange={onThresholdChange} />
-      ) : (
+      ) : null}
+
+      {/* Blad stoi nad liczbami, bo to on tlumaczy, dlaczego dalszych kawalkow nie bedzie. */}
+      {error ? <p className="mb-3 text-listed">{error}</p> : null}
+
+      {skipped ? <p className="mb-3 text-xs text-ink-muted">{SKIPPED_NOTE}</p> : null}
+
+      {analysis ? (
+        <ModelNumbers
+          analysis={analysis}
+          progress={progress}
+          threshold={threshold}
+          onThresholdChange={onThresholdChange}
+          onPickBuilding={onPickBuilding}
+        />
+      ) : null}
+
+      {/* Przycisk wraca, gdy nic nie idzie i nie ma jeszcze zadnego wyniku: pierwsze uruchomienie
+          albo ponowienie po bledzie, ktory przyszedl przed pierwszym kawalkiem. */}
+      {!loading && analysis === null ? (
         <div>
           <button
             type="button"
@@ -309,9 +405,8 @@ function ModelSection({
             Analyse roofs with the model
           </button>
           {reason ? <p className="mt-2 text-xs text-ink-muted">{reason}</p> : null}
-          {error ? <p className="mt-2 text-listed">{error}</p> : null}
         </div>
-      )}
+      ) : null}
     </Section>
   )
 }
@@ -351,8 +446,9 @@ export function ScanPanel({
   analysis,
   analysisLoading,
   analysisError,
+  analysisProgress,
+  analysisSkipped,
   onAnalyse,
-  modelLimits,
   threshold,
   onThresholdChange,
 }: ScanPanelProps) {
@@ -453,10 +549,12 @@ export function ScanPanel({
         analysis={analysis}
         loading={analysisLoading}
         error={analysisError}
+        progress={analysisProgress}
+        skipped={analysisSkipped}
         onAnalyse={onAnalyse}
-        modelLimits={modelLimits}
         threshold={threshold}
         onThresholdChange={onThresholdChange}
+        onPickBuilding={onPickBuilding}
       />
     </Shell>
   )
