@@ -1,1 +1,0 @@
-{"type":"FeatureCollection","numberMatched":3,"numberReturned":2,"features":[{"type":"Feature","id":"wfs:one","properties":{"id_lokalizacji":"1"},"geometry":{"type":"Point","coordinates":[21,52]}},{"type":"Feature","id":"wfs:two","properties":{"id_lokalizacji":"2"},"geometry":{"type":"Point","coordinates":[21.1,52.1]}}]}

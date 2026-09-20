@@ -1,107 +1,116 @@
-# Active build
+# Roofer
 
-`PROJECT.md` is the binding brief for the current work on `frontendv2`: a pnpm monorepo with an
-Express/Prisma/MySQL backend, a Next.js + Leaflet frontend, and a FastAPI/ONNX ML service. Build it
-phase by phase in the order given in section 10; do not start a phase that was not named, and do not
-change the stack in section 3 without asking.
+Mapa z rejestrem azbestu i budynkami OSM dla województwa mazowieckiego, plus dwa narzędzia:
+**skan obszaru** (prostokąt → lista budynków i statystyki) i **karta budynku** (rekord rejestru,
+powierzchnia, wycinek ortofoto). Model ML dostarczy zewnętrzne API: wysyłamy narożniki prostokąta,
+dostajemy poligony z pozycją na mapie — do połączenia z budynkami przez `ST_Intersects`.
 
-F0 is done: pnpm workspace with `packages/{database,validation,backend,frontend}`, shared
-`tsconfig.base.json`, flat ESLint config, `docker-compose.yml` with MySQL 8.4, `.env.example`.
-The packages are scaffolding; their `src/index.ts` files are empty on purpose.
+Branch `v3` zaczyna się od zera, decyzją właściciela projektu z 2026-09-20. Wcześniejsze pliki
+planu (`PROJECT.md`, `PHASES.md`, `STATUS.md`) i monorepo TS **nie obowiązują** — są na branchu
+`frontendv2`.
 
-- Install: `pnpm install`
-- Build every package: `pnpm build`
-- Type check (source and tests): `pnpm typecheck`
-- Run tests: `pnpm test`
-- Lint: `pnpm lint`
-- Database: `pnpm docker:up` / `pnpm docker:down` (MySQL on `localhost:3306`, user/password/db all `roofer`)
+## Stack
 
-Write tests as you go and keep the units under test small and directly checkable; that is an
-explicit instruction from the project owner, not a style preference.
+| Warstwa | Wybór | Dlaczego tak |
+| --- | --- | --- |
+| Frontend | Vite + React + TS + Tailwind 4 + MapLibre GL | backend jest osobny, więc SSR Next.js nic nie kupuje; MapLibre jest wymagany przy kaflach MVT |
+| Backend | FastAPI + psycopg, surowy SQL bez ORM | cała wartość to `ST_Intersects`, `ST_AsMVT`, `ST_Area(geography)` — ORM tego nie opakowuje |
+| Baza | Postgres 16 + PostGIS w Dockerze | 2,58 mln poligonów OSM i 379 tys. rekordów rejestru wymagają GiST |
+| Migracje | pliki `db/migrations/*.sql` + `backend/scripts/migrate.py` | z sumą kontrolną: edycja zastosowanego pliku to błąd, nie ostrzeżenie |
+| Rendering budynków | kafle wektorowe `ST_AsMVT` | Leaflet z SVG dławi się przy kilku tysiącach wielokątów |
 
-Push to `origin` often, without being asked each time: after every phase and after every
-self-contained step within one. Work is on the `frontendv2` branch. Commit only with the working
-tree verified green (`pnpm build`, `pnpm typecheck`, `pnpm test`, `pnpm lint`), so that what lands
-on the remote is always in a state someone else could pull.
+## Porty
 
-## Testing
+5173 frontend, 8001 backend, 5433 Postgres. Porty 3000, 8000, 5432 i 3306 zajmują sieroce
+kontenery starego stacku z projektu compose `roofer`; nowy projekt nazywa się `roofer-v3`
+i świadomie ich nie rusza.
 
-The runner is Node's built-in `node:test` with `node:assert/strict`. There is no Vitest or Jest.
-Tests live in `packages/<pkg>/tests/**/*.test.ts(x)` and are run through the `tsx` CLI.
+## Komendy
 
-- `node:test` cannot transform JSX and has no DOM. React component tests work only because
-  `tsx --tsconfig tsconfig.test.json` supplies the JSX transform and `tests/setup.ts` installs a
-  jsdom window onto `globalThis`. Do not drop either.
-- Each package has a `tsconfig.test.json` because the build config sets `rootDir: src` and would
-  refuse to see `tests/`. `typecheck` runs against the test config, so type errors in tests fail
-  the build. Verified by planting a deliberate error.
-- pnpm runs scripts through `cmd.exe` on Windows, so `VAR=value cmd` in a `scripts` entry does not
-  work. Pass configuration as a CLI flag instead of an environment variable.
-- jsdom 30 ships no type declarations; `@types/jsdom` is a separate dependency.
-- For backend HTTP tests, start the Express app on an ephemeral port and use the global `fetch`.
-  Do not add supertest.
+Docker nie jest w PATH w zwykłej powłoce: `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"`.
 
-Version constraints found by running the toolchain, not by guessing:
+- Baza: `docker compose up -d` / `docker compose down` (wolumen `roofer-v3_pgdata`)
+- Backend (z katalogu `backend/`, venv to `backend/.venv`, Python 3.11.9):
+  - instalacja: `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`
+  - migracje: `.venv/Scripts/python.exe -m scripts.migrate`
+  - serwer dev: `.venv/Scripts/python.exe -m scripts.serve`
+  - testy: `.venv/Scripts/python.exe -m pytest`
+  - testy z prawdziwą bazą: ustaw `TEST_DATABASE_URL=postgresql://roofer:roofer@localhost:5433/roofer`
+  - lint: `.venv/Scripts/python.exe -m ruff check .` oraz `... -m ruff format --check .`
+- Frontend (z katalogu `frontend/`): `pnpm install`, `pnpm dev`, `pnpm test`, `pnpm typecheck`,
+  `pnpm lint`, `pnpm build`
 
-- pnpm is pinned to 11.27.0. pnpm 12 is a Rust rewrite whose native binary the Node 22 corepack
-  (0.31) cannot install, so `corepack pnpm` fails outright on it.
-- pnpm 11 removed `onlyBuiltDependencies`; build approval lives in `allowBuilds` in
-  `pnpm-workspace.yaml`. The old key is silently ignored and the install fails with
-  `ERR_PNPM_IGNORED_BUILDS`.
-- TypeScript is pinned to 6.0.3. TS 7.0 compiles and builds fine, but typescript-eslint 8.70
-  refuses to load against it, so linting is impossible on TS 7.
-- `pnpm` reaches PATH through a corepack shim in `%APPDATA%\npm`; `corepack enable` without
-  `--install-directory` needs administrator rights on this machine.
-- Docker Desktop is installed but not on PATH in a plain shell. Prefix with
-  `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` when needed.
+Jeden `.env` w katalogu głównym obsługuje oba procesy: backend czyta `../.env`, Vite ma `envDir: '..'`.
 
-Decisions that override the legacy prototype:
+## Fazy
 
-- Asbestos registry status comes from the WMS pixel probe described in `PROJECT.md` section 7.2, not
-  from WFS vector features. That reverses the earlier rule and is a deliberate choice; the pixel
-  probe is less precise and returns no record attributes.
-- The ML prediction service is deferred. Keep `isPotentiallyAsbestos` nullable and leave it `null`
-  rather than writing `false` for an unchecked building.
+| Faza | Zakres | Gotowe, gdy | Stan |
+| --- | --- | --- | --- |
+| P0 | Szkielet: PostGIS, FastAPI `/health`, mapa MapLibre, testy | mapa renderuje się w przeglądarce, `/health` zwraca wersję PostGIS | gotowe 2026-09-20 |
+| P1 | Import snapshotów, tabele, dopasowanie budynek↔rejestr | liczby zgadzają się ze stopkami snapshotów, zapytanie o bbox 2×2 km poniżej 100 ms | — |
+| P2 | Kafle wektorowe `/tiles/buildings/{z}/{x}/{y}.mvt` + kolorowanie | całe województwo przewija się płynnie | — |
+| P3 | Skan obszaru: rysowanie prostokąta, lista, statystyki | liczby w panelu zgadzają się z mapą | — |
+| P4 | Karta budynku: atrybuty rejestru, powierzchnia, ortofoto | klik w zgłoszony budynek pokazuje atrybuty i zdjęcie dachu | — |
+| P5 | Gniazdo na API ML | podmiana jednej zmiennej środowiskowej wpina serwis kolegi | — |
 
-# Legacy prototype (`legacy/`)
+Nie zaczynaj fazy, której właściciel nie nazwał.
 
-The FastAPI + PostGIS + MapLibre application that preceded this rebuild. It is kept for reference and
-for the roof-crop and dataset tooling, which the new stack does not replace. Leave it working.
+## Pułapki potwierdzone uruchomieniem, nie domysłem
 
-- Start it: `docker compose -f legacy/docker-compose.yml up --build`
-- Backend unit tests: `cd legacy/backend && ../../.venv/Scripts/python.exe -m pytest -q`
-- Backend PostGIS integration test: set `POSTGIS_TEST_DATABASE_URL`, then run the backend tests.
-- Frontend tests: `cd legacy/frontend && npm run test`
-- Frontend type check: `cd legacy/frontend && npm run lint`
-- Frontend production build: `cd legacy/frontend && npm run build`
-- Browser E2E test: start the legacy stack with `BUILDING_PROVIDER=demo_fixture`, then run `cd legacy/frontend && npm run test:e2e`.
+1. **psycopg async nie działa na `ProactorEventLoop`**, domyślnej pętli asyncio na Windowsie —
+   `pool.open()` wisi 30 s i kończy się `PoolTimeout`. Fabryka pętli jest w `app/eventloop.py`,
+   uvicorn dostaje ją przez `--loop app.eventloop:new_event_loop` (uvicorn 0.52 przyjmuje własną
+   fabrykę jako `moduł:funkcja`), a pytest przez hook `pytest_asyncio_loop_factories`
+   w `tests/conftest.py`. Nadpisywanie fixture'a `event_loop_policy` jest w pytest-asyncio 1.4
+   **deprecated** — nie wracaj do niego.
+2. **Skrypty uruchamiaj jako moduł.** `python scripts/migrate.py` nie widzi paczki `app`;
+   działa `python -m scripts.migrate`.
+3. **pnpm 11 bez TTY** przerywa czyszczenie `node_modules`
+   (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). Potrzebne `CI=true`, a wtedy install jest
+   frozen — dorzuć `--no-frozen-lockfile`, jeśli zmieniałeś `package.json`.
+4. **Wersje pinujemy na sztywno i tylko takie, które mają ponad tydzień.** Dlatego oxlint 1.82.0
+   (nie 1.83.0), vitest 5.0.0, maplibre-gl 6.9.0, jsdom 30.0.1, uvicorn 0.52.4, psycopg 3.3.5,
+   ruff 0.16.7. `@types/node` to 22.20.2, bo lokalny Node to 22.14 — generator Vite proponował 24.x.
+5. **Nie ma GDAL-a, `ogr2ogr` ani geopandas**, są `shapely`, `pyproj` i `psycopg`. Import w P1 musi
+   czytać snapshoty linia po linii (jeden feature na linię, w stopce `],"numberReturned":N}`
+   — sprawdzaj tę liczbę) i ładować przez `COPY`. `INSERT` per feature to godziny przy 2,58 mln rekordów.
+6. **GUGiK udostępnia tu WMS, nie WMTS**: `mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/`
+   `StandardResolution`, `HighResolution` i warianty `*Time`, plus WFS `Skorowidze` jako indeks
+   pokrycia. Do wycinka jednego dachu `GetMap` z dowolnym bboxem jest właściwym narzędziem;
+   WMTS wymagałby zszywania kafli siatki.
+7. **Starlette sugeruje `httpx2` dla `TestClient`** — wersja 2.13.0 ma 6 dni, więc zostajemy na
+   httpx 0.28.1 i świadomie akceptujemy to ostrzeżenie.
+8. **Vite 8 generuje `oxlint`**, nie ESLinta. Zostawiamy oxlint.
+9. **Bundle ma 1,24 MB** (prawie w całości MapLibre). Code splitting dopiero, gdy będzie miało sens.
+10. **Kafle OSM (`tile.openstreetmap.org`) są dobre na development.** Publiczne demo potrzebuje
+    własnego źródła; atrybucja jest wymagana i pilnuje jej test `basemap.test.ts`.
 
-The legacy backend uses WFS vector features for GeoAzbest status, computes spatial metrics in
-EPSG:2180, and preserves the explicit `unknown` state on source failure. Do not retrofit the new
-WMS decision into it.
+## Dane
 
-# Roof image crops
+`Additional_data/DATA_MAZOWIECKIE.md` opisuje pochodzenie, licencje i liczebność snapshotów.
+Same pliki (0,9 GB budynków OSM, 118 MB rejestru) leżą na dysku nieśledzone przez Gita.
 
-- Install Python dependencies: `.venv/Scripts/python.exe -m pip install -r legacy/backend/requirements-dev.txt` (Python 3.11+).
-- Standalone roof crop: `.venv/Scripts/python.exe legacy/scripts/crop_roof.py --input roof.geojson --output output/roof`. Use `--input -` for UTF-8 GeoJSON on stdin; accept one WGS84 Polygon or Feature, not a FeatureCollection.
-- Crop tests: `cd legacy/backend && ../../.venv/Scripts/python.exe -m pytest -q tests/test_roof_crop.py`.
-- Live download test: set `ROOF_CROP_LIVE_TEST=1`, then run `tests/test_roof_crop.py::test_live_original_geotiff_crop`. This downloads one real 2024 RGB sheet with a 128 MiB limit; ordinary tests do not contact GUGiK.
-- The crop uses original RGB GeoTIFFs selected from the official resolution index (smallest native pixel, newest date as a tie-breaker). `--year` restricts acquisition year. WCS output pixel size alone does not establish native resolution or source provenance.
-- Full originals are cached outside the repository in the OS user cache under `Roofer/orthophotos`; override with `--cache-dir`. Downloads are limited to 1536 MiB per original by default (`--max-download-mb`), and cached rasters are checksum-verified. PNG/JSON outputs never overwrite existing files.
-- The 2022 paper (DOI `10.1016/j.buildenv.2022.109092`, sections 2.2 and 2.4) uses RGB 47x47 pixels at 0.25 m/pixel: an 11.75x11.75 m square. It discusses manually positioned roof centers; automatic polygon centroids are not an exact reproduction of that step. Do not mask surroundings or normalize each PNG independently.
-- Centroids outside the roof require review. Crops crossing a selected sheet boundary or containing declared NoData fail explicitly; this version does not stitch sheets. The GUGiK index HTML parser must fail explicitly if its metadata format changes.
-- The index also serves uppercase `.TIF` download URLs (2016 vintage). They are valid sources; rejecting them discards every record for that location, which removed 5% of surveyed cells.
+GeoAzbest to **rejestr zgłoszeń** wyrobów azbestowych pozostałych do unieszkodliwienia, bez dat
+w warstwie publicznej, i opisuje azbest w obiekcie, nie udowodnione pokrycie dachu. Brak w rejestrze
+nie jest dowodem czystego dachu. W UI mów „zgłoszony” / „niezgłoszony” / „nieznany” — nigdy
+„wykryto azbest”. Status nieznany zapisujemy jako `null`, nigdy jako `false`.
 
-# Labelled roof dataset
+## Konwencje
 
-- Build: `.venv/Scripts/python.exe legacy/scripts/build_roof_dataset.py --registry Additional_data/geoazbest-mazowieckie.geojson/geoazbest-mazowieckie.geojson --buildings Additional_data/budynki-osm-mazowieckie.geojson/budynki-osm-mazowieckie.geojson --output dataset/pilot --positives 50 --negatives 200 --per-sheet-positives 10 --per-sheet-negatives 40 --max-sheets 8`. Add `--select-only` to stop after candidate selection; reruns resume from `manifest.jsonl` and never overwrite a crop.
-- Dataset tests: `cd legacy/backend && ../../.venv/Scripts/python.exe -m pytest -q tests/test_roof_dataset.py`.
-- Positives are GeoAzbest polygons, negatives are OSM buildings at least `--exclusion-m` from every registry polygon, including registry polygons too broken to crop. Both classes come from the same sheets, so imagery date and sun angle cannot separate them.
-- Pin `--year` and `--native-resolution`; a sheet without that exact native pixel is skipped, never substituted. 2024 at 0.25 m covers every dense cell at 36-46 MiB per sheet, while 0.05 m exists in 5-15% of cells at ~1.07 GiB per sheet, so the default smallest-pixel policy can neither cover the province uniformly nor fit on disk.
-- Crop one sheet at a time. Per-crop CLI runs re-query the index and re-hash the whole cached original for every roof.
-- Selection cells are 2 km squares and sheets are ~2.2x2.35 km with a different origin, so roughly 30% of candidates fall outside the downloaded sheet; selection keeps twice the per-sheet quota as spare.
-- The snapshots are line-delimited with a `],"numberReturned":N}` footer; the reader verifies that count. Of 379122 registry records, 352101 are usable: 3393 do not project to EPSG:2180, 3402 fail crop validation, 1280 have a centroid outside the roof, 22339 fall outside the 20-1000 m2 range.
-- GeoAzbest is a declaration register of asbestos remaining for disposal, with no dates in the public layer, describing asbestos in the structure rather than proven roofing. Absence from the register is not proof of a clean roof. Keep both statements in crop metadata.
+- Testy piszemy razem z kodem, jednostki małe i sprawdzalne bezpośrednio. To polecenie właściciela.
+- Komunikaty dla użytkownika po polsku i konkretne.
+- Push do `origin` po każdej fazie i po każdym samodzielnym kroku, bez pytania — ale tylko
+  z zielonym drzewem (backend: ruff + pytest, frontend: typecheck + test + lint + build).
+- Każde zewnętrzne źródło ma stan „nieznany”; padnięte API nie może wywalić całej odpowiedzi.
 
-`Additional_data/` and `dataset/` stay at the repository root; the tooling that reads them moved, the
-data did not.
+## Branche
+
+- `v3` — aktywny.
+- `legacy` — działający prototyp FastAPI + PostGIS + MapLibre oraz narzędzia Pythonowe do wycinania
+  dachów z ortofoto i budowy oznaczonego datasetu (250 cropów w `dataset/pilot`). Zaglądaj tu po wiedzę
+  o GUGiK, EPSG:2180 i formacie snapshotów.
+- `frontendv2` — porzucone podejście: monorepo pnpm z Express/Prisma/MySQL i Next.js/Leaflet.
+- `main` — pusty initial commit.
+
+Nieśledzone pozostałości na dysku po sprzątaniu `v3`: `legacy/`, `packages/`, `node_modules/`
+i `.venv/` w katalogu głównym. Można je usunąć — zawartość jest na branchu `legacy`.

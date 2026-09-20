@@ -1,32 +1,22 @@
+name: roofer-v3
+
 services:
-  mysql:
-    image: mysql:8.4
-    restart: unless-stopped
+  db:
+    image: postgis/postgis:16-3.5
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-roofer}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-roofer}
-      MYSQL_USER: ${MYSQL_USER:-roofer}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-roofer}
+      POSTGRES_DB: roofer
+      POSTGRES_USER: roofer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-roofer}
     ports:
-      - '${MYSQL_PORT:-3306}:3306'
+      - '5433:5432'
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          'CMD',
-          'mysqladmin',
-          'ping',
-          '-h',
-          'localhost',
-          '-u',
-          'root',
-          '-p${MYSQL_ROOT_PASSWORD:-roofer}',
-        ]
+      test: ['CMD-SHELL', 'pg_isready -U roofer -d roofer']
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 20
-      start_period: 30s
+    shm_size: 512mb
 
 volumes:
-  mysql_data:
+  pgdata:
