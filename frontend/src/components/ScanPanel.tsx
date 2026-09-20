@@ -9,8 +9,8 @@ type ScanPanelProps = {
   onPickBuilding: (id: number) => void
 }
 
-const NUMBER_FORMAT = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 })
-const KM2_FORMAT = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const NUMBER_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
+const KM2_FORMAT = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
 function areaLabel(squareMeters: number): string {
   return `${NUMBER_FORMAT.format(squareMeters)} m²`
@@ -35,24 +35,15 @@ function barWidth(share: number): string {
   return `${percent.toFixed(1)}%`
 }
 
-/** Polska odmiana: 1 budynku, inaczej budynkow — liczba stoi po „z", wiec zawsze dopelniacz. */
+/** Jedyna liczba mnoga, jakiej ten panel potrzebuje: 1 building, kazda inna liczba buildings. */
 function buildingsNoun(count: number): string {
-  return count === 1 ? 'budynku' : 'budynków'
-}
-
-/** Polska odmiana: 1 pozycje, 2–4 pozycje, inaczej pozycji. */
-function itemsNoun(count: number): string {
-  if (count === 1) return 'pozycję'
-  const lastTwo = count % 100
-  const last = count % 10
-  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return 'pozycje'
-  return 'pozycji'
+  return count === 1 ? 'building' : 'buildings'
 }
 
 /** Numer dzialki jest jedynym opisowym atrybutem rejestru; bez niego zostaje sam brak numeru. */
 function parcelLabel(building: ListedBuilding): string {
   const parcel = building.nrDzialki?.trim()
-  return parcel ? `Działka ${parcel}` : 'Bez numeru działki'
+  return parcel ? `Parcel ${parcel}` : 'No parcel number'
 }
 
 /**
@@ -60,10 +51,9 @@ function parcelLabel(building: ListedBuilding): string {
  * zdania przycieta lista wygladalaby jak komplet, a statystyki jak niezgodne z nia.
  */
 function truncationNote(scan: AreaScan): string {
-  const count = scan.listedBuildings.length
-  const shown = `${NUMBER_FORMAT.format(count)} ${itemsNoun(count)}`
+  const shown = NUMBER_FORMAT.format(scan.listedBuildings.length)
   const listed = NUMBER_FORMAT.format(scan.stats.listed)
-  return `Lista jest przycięta: widać ${shown} z ${listed} zgłoszonych budynków. Statystyki powyżej liczą cały zaznaczony obszar.`
+  return `The list is truncated: showing ${shown} of ${listed} listed buildings. The statistics above cover the whole selected area.`
 }
 
 /** Para etykieta/wartosc: mikropodpis po lewej, wartosc po prawej, wiersze rozdziela wlosowa linia. */
@@ -90,8 +80,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function RegistryNote() {
   return (
     <p className="mt-4 border-t border-hairline pt-4 text-xs text-ink-faint">
-      Rejestr GeoAzbest jest niekompletny i opisuje zgłoszenia wyrobów azbestowych, a nie stan dachów. Brak budynku w
-      rejestrze nie jest dowodem, że dach jest czysty — znaczy tylko, że nikt go nie zgłosił.
+      The GeoAzbest register is incomplete and records reports of asbestos-containing products, not the condition of
+      roofs. A building missing from the register is not proof that the roof is clean — it only means nobody reported
+      it.
     </p>
   )
 }
@@ -100,18 +91,18 @@ function RegistryNote() {
 function Shell({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   return (
     <section
-      aria-label="Wynik skanu obszaru"
+      aria-label="Area scan result"
       className="flex max-h-[80vh] w-88 flex-col rounded-card border border-hairline bg-surface text-ink shadow-[0_1px_3px_rgba(5,28,44,0.08)]"
     >
       <header className="flex items-start justify-between gap-3 border-b border-hairline px-5 pt-3 pb-3">
         <div>
-          <p className="label-micro">Zaznaczony prostokąt</p>
-          <h2 className="font-display text-base leading-snug text-ink">Wynik skanu obszaru</h2>
+          <p className="label-micro">Selected rectangle</p>
+          <h2 className="font-display text-base leading-snug text-ink">Area scan result</h2>
         </div>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Zamknij"
+          aria-label="Close"
           className="-mt-1 -mr-2 rounded-card px-2 py-1 text-base leading-none text-ink-faint hover:bg-surface-muted hover:text-ink"
         >
           ×
@@ -126,7 +117,7 @@ export function ScanPanel({ scan, loading, error, onClose, onPickBuilding }: Sca
   if (loading) {
     return (
       <Shell onClose={onClose}>
-        <p className="text-ink-muted">Skanuję obszar…</p>
+        <p className="text-ink-muted">Scanning the area…</p>
       </Shell>
     )
   }
@@ -147,9 +138,9 @@ export function ScanPanel({ scan, loading, error, onClose, onPickBuilding }: Sca
   if (stats.total === 0) {
     return (
       <Shell onClose={onClose}>
-        <p className="text-ink-muted">W tym obszarze nie ma budynków z OpenStreetMap.</p>
+        <p className="text-ink-muted">There are no OpenStreetMap buildings in this area.</p>
         <dl className="mt-4 border-t border-hairline pt-4">
-          <Row label="Powierzchnia zaznaczenia" value={km2Label(scan.areaKm2)} />
+          <Row label="Selection area" value={km2Label(scan.areaKm2)} />
         </dl>
         <RegistryNote />
       </Shell>
@@ -160,9 +151,9 @@ export function ScanPanel({ scan, loading, error, onClose, onPickBuilding }: Sca
     <Shell onClose={onClose}>
       {/* Liczba prowadzaca: udzial zgloszonych. Reszta panelu jest jej uzasadnieniem. */}
       <p className="font-display text-4xl leading-none text-ink">{percentLabel(stats.listedShare)}</p>
-      <p className="label-micro mt-1.5">Udział zgłoszonych w rejestrze</p>
+      <p className="label-micro mt-1.5">Share listed in the register</p>
       <p className="mt-1 text-ink-muted">
-        {NUMBER_FORMAT.format(stats.listed)} z {NUMBER_FORMAT.format(stats.total)} {buildingsNoun(stats.total)}
+        {NUMBER_FORMAT.format(stats.listed)} of {NUMBER_FORMAT.format(stats.total)} {buildingsNoun(stats.total)}
       </p>
 
       <div className="mt-3 h-2 w-full border border-hairline bg-surface-muted">
@@ -173,21 +164,21 @@ export function ScanPanel({ scan, loading, error, onClose, onPickBuilding }: Sca
         />
       </div>
 
-      <Section title="Obszar i budynki">
+      <Section title="Area and buildings">
         <dl>
-          <Row label="Powierzchnia zaznaczenia" value={km2Label(scan.areaKm2)} />
-          <Row label="Budynki w obszarze" value={NUMBER_FORMAT.format(stats.total)} />
-          <Row label="Zgłoszone" value={NUMBER_FORMAT.format(stats.listed)} />
-          <Row label="Niezgłoszone" value={NUMBER_FORMAT.format(stats.notListed)} />
-          <Row label="Powierzchnia dachów" value={areaLabel(stats.roofAreaM2)} />
-          <Row label="Powierzchnia dachów zgłoszonych" value={areaLabel(stats.listedRoofAreaM2)} />
-          <Row label="Rekordy rejestru w obszarze" value={NUMBER_FORMAT.format(stats.registryRecords)} />
+          <Row label="Selection area" value={km2Label(scan.areaKm2)} />
+          <Row label="Buildings in the area" value={NUMBER_FORMAT.format(stats.total)} />
+          <Row label="Listed" value={NUMBER_FORMAT.format(stats.listed)} />
+          <Row label="Not listed" value={NUMBER_FORMAT.format(stats.notListed)} />
+          <Row label="Roof area" value={areaLabel(stats.roofAreaM2)} />
+          <Row label="Roof area of listed buildings" value={areaLabel(stats.listedRoofAreaM2)} />
+          <Row label="Register records in the area" value={NUMBER_FORMAT.format(stats.registryRecords)} />
         </dl>
       </Section>
 
-      <Section title={`Zgłoszone budynki (${NUMBER_FORMAT.format(stats.listed)})`}>
+      <Section title={`Listed buildings (${NUMBER_FORMAT.format(stats.listed)})`}>
         {listedBuildings.length === 0 ? (
-          <p className="text-ink-muted">Żadnego budynku z tego obszaru nie ma w rejestrze.</p>
+          <p className="text-ink-muted">No building from this area is in the register.</p>
         ) : (
           // Lista bywa dluga (backend oddaje do 500 pozycji), wiec przewija sie sama,
           // a statystyki zostaja widoczne nad nia.

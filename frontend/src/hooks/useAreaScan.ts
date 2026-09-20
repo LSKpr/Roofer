@@ -42,7 +42,7 @@ export function useAreaScan(): AreaScanState {
     fetchAreaScan(bounds)
       .then((scan) => settle({ request: id, scan, error: null }))
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'Nie udało się przeskanować obszaru.'
+        const message = error instanceof Error ? error.message : 'Could not scan the area.'
         settle({ request: id, scan: null, error: message })
       })
   }, [])

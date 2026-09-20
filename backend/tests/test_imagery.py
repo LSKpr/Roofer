@@ -272,7 +272,7 @@ def test_unknown_building_has_no_roof_image() -> None:
         response = client.get(ROOF_PATH)
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Nie ma budynku o tym identyfikatorze."
+    assert response.json()["detail"] == "There is no building with this identifier."
 
 
 def test_dead_database_does_not_break_the_roof_image() -> None:

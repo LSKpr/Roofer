@@ -131,7 +131,7 @@ it('says the database is missing instead of pretending everything is fine', asyn
 
   render(<App />)
 
-  expect(await screen.findByText(/Backend bez bazy: connection refused/)).toBeDefined()
+  expect(await screen.findByText(/Backend without a database: connection refused/)).toBeDefined()
 })
 
 it('reports an unreachable backend', async () => {
@@ -139,7 +139,7 @@ it('reports an unreachable backend', async () => {
 
   render(<App />)
 
-  expect(await screen.findByText(/Backend niedostepny: Failed to fetch/)).toBeDefined()
+  expect(await screen.findByText(/Backend unavailable: Failed to fetch/)).toBeDefined()
 })
 
 it('lets the user search for a place', async () => {
@@ -147,7 +147,7 @@ it('lets the user search for a place', async () => {
 
   render(<App />)
 
-  expect(await screen.findByLabelText('Szukaj miejscowości lub adresu')).toBeDefined()
+  expect(await screen.findByLabelText('Search for a place or address')).toBeDefined()
 })
 
 it('hands the chosen basemap to the map', async () => {
@@ -156,7 +156,7 @@ it('hands the chosen basemap to the map', async () => {
   render(<App />)
   expect(screen.getByTestId('map-basemap').textContent).toBe('standard')
 
-  fireEvent.click(screen.getByText('Ortofoto'))
+  fireEvent.click(screen.getByText('Aerial'))
 
   expect(screen.getByTestId('map-basemap').textContent).toBe('orthophoto')
 })
@@ -166,14 +166,14 @@ it('shows the area limit the backend reports, instead of a hardcoded number', as
 
   render(<App />)
 
-  expect(await screen.findByText(/maks\. 25 km²/)).toBeDefined()
+  expect(await screen.findByText(/max 25 km²/)).toBeDefined()
 })
 
 it('scans the rectangle the user drew and shows the share of listed buildings', async () => {
   const fetchStub = stubApi()
 
   render(<App />)
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   expect(screen.getByTestId('map-drawing').textContent).toBe('rysuje')
 
   fireEvent.click(screen.getByText('narysuj prostokat'))
@@ -188,9 +188,9 @@ it('opens the building card for a row picked in the scan result', async () => {
   stubApi()
 
   render(<App />)
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   fireEvent.click(screen.getByText('narysuj prostokat'))
-  fireEvent.click(await screen.findByText('Działka 142511_2.0012.2.2077/21'))
+  fireEvent.click(await screen.findByText('Parcel 142511_2.0012.2.2077/21'))
 
   expect(await screen.findByText(/141210_5\.0017\.105\/1/)).toBeDefined()
 })
@@ -202,7 +202,7 @@ it('keeps the drawn rectangle on the map once the scan is done', async () => {
 
   render(<App />)
   expect(screen.getByTestId('map-scanned-area').textContent).toBe('brak')
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   fireEvent.click(screen.getByText('narysuj prostokat'))
 
   expect(await screen.findByText('47%')).toBeDefined()
@@ -213,11 +213,11 @@ it('drops the rectangle when the result panel is closed', async () => {
   stubApi()
 
   render(<App />)
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   fireEvent.click(screen.getByText('narysuj prostokat'))
   await screen.findByText('47%')
 
-  fireEvent.click(screen.getByLabelText('Zamknij'))
+  fireEvent.click(screen.getByLabelText('Close'))
 
   expect(screen.getByTestId('map-scanned-area').textContent).toBe('brak')
 })
@@ -227,9 +227,9 @@ it('still shows the rectangle after the user opens a building from the list', as
   stubApi()
 
   render(<App />)
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   fireEvent.click(screen.getByText('narysuj prostokat'))
-  fireEvent.click(await screen.findByText('Działka 142511_2.0012.2.2077/21'))
+  fireEvent.click(await screen.findByText('Parcel 142511_2.0012.2.2077/21'))
   await screen.findByText(/141210_5\.0017\.105\/1/)
 
   expect(screen.getByTestId('map-scanned-area').textContent).toBe(DRAWN_LABEL)
@@ -238,13 +238,13 @@ it('still shows the rectangle after the user opens a building from the list', as
 // Blad („obszar za duzy") jest wlasnie tym momentem, w ktorym uzytkownik musi zobaczyc,
 // co zaznaczyl, zeby poprawic zaznaczenie.
 it('keeps the rectangle visible when the scan fails', async () => {
-  stubApi({ scan: [400, { detail: 'Zaznaczony obszar jest za duży.' }] })
+  stubApi({ scan: [400, { detail: 'The selected area is too large.' }] })
 
   render(<App />)
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   fireEvent.click(screen.getByText('narysuj prostokat'))
 
-  expect(await screen.findByText(/za duży/)).toBeDefined()
+  expect(await screen.findByText(/too large/)).toBeDefined()
   expect(screen.getByTestId('map-scanned-area').textContent).toBe(DRAWN_LABEL)
 })
 
@@ -253,11 +253,11 @@ it('clears the old rectangle as soon as the user starts drawing again', async ()
   stubApi()
 
   render(<App />)
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
   fireEvent.click(screen.getByText('narysuj prostokat'))
   await screen.findByText('47%')
 
-  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('Select'))
 
   expect(screen.getByTestId('map-drawing').textContent).toBe('rysuje')
   expect(screen.getByTestId('map-scanned-area').textContent).toBe('brak')
@@ -268,7 +268,7 @@ it('always shows the legend, so the colours are never unexplained', async () => 
 
   render(<App />)
 
-  expect(await screen.findByText(/Zgłoszony w rejestrze GeoAzbest/)).toBeDefined()
+  expect(await screen.findByText(/Listed in the GeoAzbest register/)).toBeDefined()
 })
 
 // Przelacznik rejestru startuje wlaczony: mapa ma wygladac tak samo jak przed jego dodaniem.
@@ -278,18 +278,18 @@ it('starts with the registry highlight on', async () => {
   render(<App />)
 
   expect(screen.getByTestId('map-show-registry').textContent).toBe('true')
-  expect((screen.getByLabelText('Podświetl zgłoszone w rejestrze') as HTMLInputElement).checked).toBe(true)
+  expect((screen.getByLabelText('Highlight buildings listed in the register') as HTMLInputElement).checked).toBe(true)
 })
 
 it('turns the registry highlight off for the map when the checkbox is unticked', async () => {
   stubApi()
 
   render(<App />)
-  fireEvent.click(screen.getByLabelText('Podświetl zgłoszone w rejestrze'))
+  fireEvent.click(screen.getByLabelText('Highlight buildings listed in the register'))
 
   expect(screen.getByTestId('map-show-registry').textContent).toBe('false')
 
-  fireEvent.click(screen.getByLabelText('Podświetl zgłoszone w rejestrze'))
+  fireEvent.click(screen.getByLabelText('Highlight buildings listed in the register'))
   expect(screen.getByTestId('map-show-registry').textContent).toBe('true')
 })
 
@@ -299,11 +299,11 @@ it('makes the legend admit that the highlight is off', async () => {
   stubApi()
 
   render(<App />)
-  expect(screen.queryByText(/Podświetlenie rejestru jest wyłączone/)).toBeNull()
+  expect(screen.queryByText(/Register highlighting is off/)).toBeNull()
 
-  fireEvent.click(screen.getByLabelText('Podświetl zgłoszone w rejestrze'))
+  fireEvent.click(screen.getByLabelText('Highlight buildings listed in the register'))
 
-  expect(screen.getByText(/brak czerwieni nie znaczy, że nikt nic nie zgłosił/)).toBeDefined()
+  expect(screen.getByText(/no red does not mean nobody reported anything/)).toBeDefined()
 })
 
 it('opens the building card for the building picked on the map', async () => {
@@ -333,5 +333,6 @@ it('explains an empty map instead of leaving it looking broken', async () => {
   render(<App />)
   fireEvent.click(screen.getByText('oddal'))
 
-  expect(await screen.findByText(/Przybliż, aby zobaczyć obrysy dachów/)).toBeDefined()
+  // Calego zdania pilnuje ZoomHint.test.tsx; tutaj chodzi tylko o to, ze podpowiedz sie pokazala.
+  expect(await screen.findByText(/Zoom in/)).toBeDefined()
 })

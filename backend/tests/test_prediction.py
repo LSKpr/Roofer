@@ -16,7 +16,12 @@ from app.prediction import (
     MOCK_SUSPECTED_NOTE,
     MOCK_UNKNOWN_NOTE,
     MOCK_UNLIKELY_NOTE,
+    MODEL_BUSY_NOTE,
+    MODEL_IMAGERY_NOTE,
+    MODEL_MISSING_NOTE,
+    MODEL_NO_RESULT_NOTE,
     PROVIDER_ERROR_NOTE,
+    STATUS_NOTES,
     SUSPECTED_THRESHOLD,
     UNAVAILABLE_NOTE,
     BuildingShape,
@@ -64,11 +69,15 @@ GRADED_IDS = (27469148, 28287777, 28759017, 28965947, 30683417, 31060079, 319683
 ROW = (SUSPECTED_ID, 126.6, 21.0800, 51.2500, 21.0797, 51.2498, 21.0803, 51.2502)
 
 # Slowa, ktorych wynik oceny nie ma prawa uzyc twierdzaco. Model patrzy na wyglad pokrycia,
-# a nie na sklad materialu, wiec „wykryto azbest" czy „dach bezpieczny" to nadinterpretacja.
-FORBIDDEN_CLAIMS = ("wykryto azbest", "brak azbestu", "bezpiecz", "czyst")
-NEGATIONS = ("nie ", "nigdy ", "bez ", "zadn")
+# a nie na sklad materialu, wiec „detected asbestos" czy „this roof is safe" to nadinterpretacja.
+# Noty sa po angielsku (taki jest interfejs), wiec straznik slownictwa tez jest angielski.
+FORBIDDEN_CLAIMS = ("detected asbestos", "asbestos-free", "no asbestos", "safe", "clean")
+NEGATIONS = ("not ", "never ", "no result", "nothing")
 SENTENCE_BREAKS = ".!?;"
-DIACRITICS = "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ"
+
+# Zdanie, ktore musi padnac w kazdej nocie stanu „nie wiemy" — inaczej brak wyniku da sie przeczytac
+# jako ocene zero, czyli „sprawdzone i nic nie widac".
+NO_RESULT_PHRASE = "no result is not the same as zero"
 
 
 def settings_with(provider: str = "mock") -> Settings:
@@ -97,7 +106,7 @@ def shape(building_id: int = SUSPECTED_ID) -> BuildingShape:
 
 
 def sentences(text: str) -> list[str]:
-    """Podzial na zdania, bo przeczenie („nie znaczy, ze...") czesto stoi przed przecinkiem."""
+    """Podzial na zdania, bo przeczenie („does not mean that...") czesto stoi przed przecinkiem."""
     parts = [text]
     for mark in SENTENCE_BREAKS:
         parts = [piece for part in parts for piece in part.split(mark)]
@@ -107,9 +116,9 @@ def sentences(text: str) -> list[str]:
 def affirmative_claims(note: str) -> list[str]:
     """Zakazane sformulowania uzyte TWIERDZACO w podanej nocie.
 
-    Zdanie negujace jest dopuszczalne („niska ocena nie znaczy, ze dach jest bezpieczny"), wiec
-    slowo liczy sie tylko wtedy, gdy w jego zdaniu nie ma przeczenia. Regula patrzy na cale zdanie,
-    wiec da sie ja oszukac zdaniem, ktore neguje zupelnie co innego — dlatego obok jest drugi test,
+    Zdanie negujace jest dopuszczalne („a low score does not mean the roof is safe"), wiec slowo
+    liczy sie tylko wtedy, gdy w jego zdaniu nie ma przeczenia. Regula patrzy na cale zdanie, wiec
+    da sie ja oszukac zdaniem, ktore neguje zupelnie co innego — dlatego obok jest drugi test,
     ktory wymaga, zeby nasze noty tych slow w ogole nie uzywaly.
     """
     lowered = note.lower()
@@ -123,13 +132,30 @@ def affirmative_claims(note: str) -> list[str]:
 
 
 def all_notes() -> dict[str, str]:
+    """Kazda nota, ktora moze trafic do karty budynku: atrapa, brak dostawcy i prawdziwy model."""
     return {
         "mock/suspected": MOCK_SUSPECTED_NOTE,
         "mock/unlikely": MOCK_UNLIKELY_NOTE,
         "mock/unknown": MOCK_UNKNOWN_NOTE,
         "unavailable": UNAVAILABLE_NOTE,
         "provider-error": PROVIDER_ERROR_NOTE,
+        "model/scored": MODEL_IMAGERY_NOTE,
+        "model/no-result": MODEL_NO_RESULT_NOTE.format(powod=STATUS_NOTES["low_quality"]) + " " + MODEL_IMAGERY_NOTE,
+        "model/missing": MODEL_MISSING_NOTE,
+        "model/busy": MODEL_BUSY_NOTE.format(seconds="30"),
     }
+
+
+# Noty stanow „nie wiemy". Kazda z nich musi powiedziec wprost, ze wyniku nie ma i ze to nie to
+# samo co ocena zero; noty z liczba (mock/suspected, mock/unlikely, model/scored) tego nie musza.
+NO_RESULT_NOTES = (
+    "mock/unknown",
+    "unavailable",
+    "provider-error",
+    "model/no-result",
+    "model/missing",
+    "model/busy",
+)
 
 
 def one_line(sql: str) -> str:
@@ -226,8 +252,8 @@ def test_mock_is_recognisable_as_a_mock_without_reading_the_ui() -> None:
         result = mock_analysis(building_id)
         assert result.source == "mock"
         assert result.model_name is None
-        assert "demonstracyjny" in result.note
-        assert "bez modelu ML" in result.note
+        assert "Demonstration result" in result.note
+        assert "no ML model" in result.note
 
 
 def test_mock_verdict_and_probability_always_agree() -> None:
@@ -318,13 +344,16 @@ def test_no_result_from_a_missing_provider_must_stay_unknown() -> None:
 
 
 def test_the_vocabulary_rule_tells_a_claim_from_a_denial() -> None:
-    assert affirmative_claims("Dach jest bezpieczny.") == ["bezpiecz"]
-    assert affirmative_claims("Wykryto azbest na dachu.") == ["wykryto azbest"]
-    assert affirmative_claims("Ten dach jest czysty.") == ["czyst"]
-    assert affirmative_claims("Niska ocena nie znaczy, ze dach jest bezpieczny.") == []
-    assert affirmative_claims("Nigdy nie piszemy, ze wykryto azbest.") == []
+    """Straznik slownictwa po angielsku: liczy sie zdanie, nie samo slowo."""
+    assert affirmative_claims("This roof is safe.") == ["safe"]
+    assert affirmative_claims("The model detected asbestos on this roof.") == ["detected asbestos"]
+    assert affirmative_claims("This roof is clean.") == ["clean"]
+    assert affirmative_claims("This building is asbestos-free.") == ["asbestos-free"]
+    assert affirmative_claims("A low score does not mean the roof is safe.") == []
+    assert affirmative_claims("We never say that the model detected asbestos.") == []
+    assert affirmative_claims("No result is not the same as zero.") == []
     # Regula patrzy na zdanie, wiec twierdzenie w pierwszym zdaniu wychodzi mimo przeczenia w drugim.
-    assert affirmative_claims("Dach jest czysty. Nie ma tu azbestu.") == ["czyst"]
+    assert affirmative_claims("This roof is clean. Nothing was found here.") == ["clean"]
 
 
 def test_no_note_claims_anything_about_asbestos_itself() -> None:
@@ -337,22 +366,38 @@ def test_no_note_claims_anything_about_asbestos_itself() -> None:
 
 
 def test_notes_explain_what_the_model_actually_recognises() -> None:
-    assert "eternitu" in MOCK_SUSPECTED_NOTE
-    assert "obecność azbestu" in MOCK_SUSPECTED_NOTE  # wprost: pokrycie, nie sklad materialu
-    assert "eternit" in MOCK_UNLIKELY_NOTE
-    assert "ocena zero" in MOCK_UNKNOWN_NOTE
-    assert "ocena zero" in UNAVAILABLE_NOTE
+    """Pokrycie, a nie sklad materialu — i nie potwierdzenie azbestu."""
+    assert "cement-asbestos" in MOCK_SUSPECTED_NOTE
+    assert "the look of the covering, not the material" in MOCK_SUSPECTED_NOTE
+    assert "not the presence of asbestos" in MOCK_SUSPECTED_NOTE
+    assert "cement-asbestos" in MOCK_UNLIKELY_NOTE
+    assert "the look of the covering, not the material" in MODEL_IMAGERY_NOTE
+    assert "77% accuracy and 63% asbestos recall" in MODEL_IMAGERY_NOTE
+    assert NO_RESULT_PHRASE in MOCK_UNKNOWN_NOTE.lower()
+    assert NO_RESULT_PHRASE in UNAVAILABLE_NOTE.lower()
 
 
-def test_notes_are_written_in_proper_polish() -> None:
-    """Noty widzi urzednik w karcie budynku, wiec pisze sie je z ogonkami.
+def test_every_note_is_readable_and_admits_when_there_is_no_result() -> None:
+    """To, co naprawde musi przezyc kazde tlumaczenie noty.
 
-    Zasada „bez znakow diakrytycznych" dotyczy komentarzy i identyfikatorow w kodzie. Wczesniejsza
-    wersja tego testu wymagala braku ogonkow takze w komunikatach — i przez to w interfejsie stalo
-    „Ocena z jednego zdjecia satelitarnego", co wyglada na usterke, a nie na decyzje.
+    Nastepca testu, ktory wymagal polskich ogonkow: po przejsciu interfejsu na angielski pilnowal
+    juz tylko jezyka, a nie sensu. Liczy sie, ze nota w ogole jest, ze stan „nie wiemy" mowi wprost
+    o braku wyniku (bo inaczej czyta sie go jak ocene zero) i ze zadna nota nie twierdzi niczego
+    o samym azbescie.
     """
-    for label, note in all_notes().items():
-        assert set(note) & set(DIACRITICS), label
+    notes = all_notes()
+
+    for label, note in notes.items():
+        assert note.strip(), label
+        assert affirmative_claims(note) == [], label
+
+    for label in NO_RESULT_NOTES:
+        assert NO_RESULT_PHRASE in notes[label].lower(), label
+
+
+def test_the_note_of_a_scored_roof_points_at_the_imagery_the_model_actually_saw() -> None:
+    """Karta pokazuje ortofotomape GUGiK, a model patrzyl na Google Satellite — to dwa zrodla."""
+    assert "Google Satellite (zoom 20), not the GUGiK aerial imagery shown in this card" in MODEL_IMAGERY_NOTE
 
 
 def test_endpoint_returns_the_full_contract_in_camel_case() -> None:
@@ -403,12 +448,12 @@ def test_endpoint_with_the_none_provider_says_it_has_no_model() -> None:
     }
 
 
-def test_a_missing_building_is_404_with_a_polish_message() -> None:
+def test_a_missing_building_is_404_with_a_message_for_the_user() -> None:
     with client_with(FakePool(row=None)) as client:
         response = client.get("/api/buildings/999999999/analysis")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Nie ma budynku o tym identyfikatorze."
+    assert response.json()["detail"] == "There is no building with this identifier."
 
 
 def test_a_dead_database_degrades_to_503_instead_of_a_traceback() -> None:
@@ -416,7 +461,7 @@ def test_a_dead_database_degrades_to_503_instead_of_a_traceback() -> None:
         response = client.get(f"/api/buildings/{SUSPECTED_ID}/analysis")
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Baza nie odpowiada."
+    assert response.json()["detail"] == "The database is not responding."
 
 
 def test_a_broken_provider_answers_unknown_instead_of_breaking_the_building_card() -> None:

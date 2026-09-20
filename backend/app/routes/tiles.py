@@ -34,7 +34,7 @@ def cache_headers(etag: str | None) -> dict[str, str]:
 )
 async def buildings_tile(z: int, x: int, y: int, request: Request) -> Response:
     if not within_grid(z, x, y):
-        raise HTTPException(status_code=400, detail="Wspolrzedne kafla sa poza siatka dla tego zoomu.")
+        raise HTTPException(status_code=400, detail="Tile coordinates are outside the grid for this zoom.")
     query = tile_sql(z)
     if query is None:
         # Ponizej progu zoomu kafel jest pusty z decyzji w kodzie, nie z powodu danych, wiec nie

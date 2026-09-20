@@ -17,10 +17,10 @@ type LegendProps = {
 export function Legend({ className, showRegistry = true }: LegendProps) {
   return (
     <section
-      aria-label="Legenda mapy"
+      aria-label="Map legend"
       className={`w-80 rounded-card border border-hairline bg-surface px-5 py-4 text-ink shadow-[0_1px_3px_rgba(5,28,44,0.08)] ${className ?? ''}`}
     >
-      <h2 className="label-micro">Legenda</h2>
+      <h2 className="label-micro">Legend</h2>
       <ul className="mt-2 space-y-1.5 text-sm">
         <li className="flex items-center gap-2.5">
           <span
@@ -28,7 +28,7 @@ export function Legend({ className, showRegistry = true }: LegendProps) {
             className="inline-block h-2 w-2 shrink-0"
             style={{ backgroundColor: LISTED_COLOR }}
           />
-          Zgłoszony w rejestrze GeoAzbest
+          Listed in the GeoAzbest register
         </li>
         <li className="flex items-center gap-2.5">
           <span
@@ -36,7 +36,7 @@ export function Legend({ className, showRegistry = true }: LegendProps) {
             className="inline-block h-2 w-2 shrink-0"
             style={{ backgroundColor: NOT_LISTED_COLOR }}
           />
-          Niezgłoszony
+          Not listed
         </li>
       </ul>
 
@@ -47,8 +47,8 @@ export function Legend({ className, showRegistry = true }: LegendProps) {
       */}
       {!showRegistry && (
         <p data-testid="legend-registry-off" className="mt-3 border-t border-hairline pt-3 text-xs text-ink">
-          Podświetlenie rejestru jest wyłączone: brak czerwieni nie znaczy, że nikt nic nie zgłosił. Ukryte jest też
-          zagęszczenie zgłoszeń po oddaleniu.
+          Register highlighting is off: no red does not mean nobody reported anything. The report density shown when
+          zoomed out is hidden too.
         </p>
       )}
 
@@ -57,33 +57,33 @@ export function Legend({ className, showRegistry = true }: LegendProps) {
         a kolory i tak pochodza z tej samej stalej co warstwa mapy.
       */}
       <div className="mt-4 border-t border-hairline pt-4">
-        <h3 className="label-micro">Zagęszczenie zgłoszeń po oddaleniu</h3>
+        <h3 className="label-micro">Report density when zoomed out</h3>
         <div data-testid="legend-heat-ramp" className="mt-2 flex border border-hairline">
           {HEATMAP_RAMP_COLORS.map((color) => (
             <span key={color} data-testid="legend-heat-step" className="h-2 flex-1" style={{ backgroundColor: color }} />
           ))}
         </div>
         <div className="mt-1 flex justify-between">
-          <span className="label-micro">Pojedyncze zgłoszenia</span>
-          <span className="label-micro">Skupisko</span>
+          <span className="label-micro">Single reports</span>
+          <span className="label-micro">Cluster</span>
         </div>
         <p className="mt-2 text-xs text-ink-muted">
-          Intensywność koloru to zagęszczenie budynków zgłoszonych w rejestrze GeoAzbest — nie ilość azbestu i nie
-          poziom ryzyka.
+          Colour intensity is the density of buildings listed in the GeoAzbest register — not the amount of asbestos
+          and not a level of risk.
         </p>
       </div>
 
       <p className="mt-4 border-t border-hairline pt-4 text-xs text-ink-faint">
-        Po oddaleniu mapa pokazuje wyłącznie zgłoszone budynki. Obszar bez koloru znaczy „nikt nic tu nie zgłosił", a
-        nie „nic tam nie ma": gmina, która nie prowadzi inwentaryzacji, zostaje na tej mapie pusta.
+        When zoomed out the map shows only listed buildings. An area with no colour means "nobody reported anything
+        here", not "there is nothing there": a municipality that runs no inventory stays blank on this map.
       </p>
       <p className="mt-2 text-xs text-ink-faint">
-        Obrysy budynków pojawiają się od zoomu {POLYGON_MIN_ZOOM} i dopiero wtedy można kliknąć pojedynczy dach.
-        W samo ciepło kliknąć się nie da — komórka siatki nie jest budynkiem.
+        Building outlines appear from zoom {POLYGON_MIN_ZOOM} and only then can a single roof be clicked. The heat
+        itself is not clickable — a grid cell is not a building.
       </p>
       <p className="mt-2 text-xs text-ink-faint">
-        Rejestr jest niekompletny: brak budynku w rejestrze nie jest dowodem, że dach jest czysty — znaczy tylko, że
-        nikt go nie zgłosił.
+        The register is incomplete: a building missing from it is not proof that the roof is clean — it only means
+        nobody reported it.
       </p>
     </section>
   )

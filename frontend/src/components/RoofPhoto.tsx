@@ -25,12 +25,12 @@ export function RoofPhoto({ buildingId, size = 384 }: RoofPhotoProps) {
       <div className="aspect-square w-full overflow-hidden rounded-card border border-hairline bg-surface-muted">
         {state === 'unavailable' ? (
           <p className="flex h-full items-center justify-center px-6 text-center text-xs text-ink-muted">
-            Ortofotomapa niedostępna
+            Aerial imagery unavailable
           </p>
         ) : (
           <img
             src={roofImageUrl(buildingId, size)}
-            alt="Zdjęcie lotnicze dachu budynku z ortofotomapy"
+            alt={`Roof of building ${buildingId}`}
             loading="lazy"
             width={size}
             height={size}
@@ -42,10 +42,10 @@ export function RoofPhoto({ buildingId, size = 384 }: RoofPhotoProps) {
       </div>
       <figcaption className="mt-2 space-y-1">
         <p className="text-xs text-ink-faint">
-          Zdjęcie pokazuje pokrycie dachu w momencie nalotu lotniczego. Nie potwierdza materiału pokrycia ani jego
-          dzisiejszego stanu.
+          The image shows the roof as it looked during the aerial survey. It does not confirm what the covering is made
+          of, nor what state the roof is in today.
         </p>
-        <p className="label-micro">Ortofotomapa: GUGiK / Geoportal.gov.pl</p>
+        <p className="label-micro">Aerial imagery: GUGiK / Geoportal.gov.pl</p>
       </figcaption>
     </figure>
   )

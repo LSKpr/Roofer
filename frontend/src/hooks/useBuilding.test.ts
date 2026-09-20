@@ -44,7 +44,7 @@ it('keeps the error message the backend gave', async () => {
 
   const { result } = renderHook(() => useBuilding(42))
 
-  await waitFor(() => expect(result.current.error).toMatch(/Nie ma budynku/))
+  await waitFor(() => expect(result.current.error).toMatch(/no building with this identifier/))
   expect(result.current.building).toBeNull()
 })
 

@@ -107,7 +107,7 @@ it('keeps the rate limit message the client produced for 429', async () => {
   act(() => result.current.setQuery('zwole'))
   await tick(SEARCH_DEBOUNCE_MS)
 
-  expect(result.current.error).toMatch(/Za dużo zapytań/)
+  expect(result.current.error).toMatch(/Too many search requests/)
   expect(result.current.results).toEqual([])
   expect(result.current.loading).toBe(false)
 })
@@ -119,7 +119,7 @@ it('keeps the outage message the client produced for 503', async () => {
   act(() => result.current.setQuery('zwole'))
   await tick(SEARCH_DEBOUNCE_MS)
 
-  expect(result.current.error).toBe('Wyszukiwarka miejsc nie odpowiada.')
+  expect(result.current.error).toBe('The place search is not responding.')
 })
 
 it('clears the phrase and the results', async () => {

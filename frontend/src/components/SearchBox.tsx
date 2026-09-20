@@ -39,7 +39,7 @@ export function SearchBox({ onPick, className }: SearchBoxProps) {
 
   const asks = query.trim().length >= MIN_QUERY_LENGTH
   const open = asks && !collapsed
-  // aria-expanded i aria-controls opisuja liste, a nie sam panel: przy „Szukam…" i bledzie
+  // aria-expanded i aria-controls opisuja liste, a nie sam panel: przy „Searching…" i bledzie
   // zadnego listboxa w drzewie nie ma, wiec czytnik nie ma czego ogloszic jako rozwiniete.
   const listVisible = open && error === null && !loading && results.length > 0
 
@@ -84,12 +84,12 @@ export function SearchBox({ onPick, className }: SearchBoxProps) {
         <input
           type="search"
           role="combobox"
-          aria-label="Szukaj miejscowości lub adresu"
+          aria-label="Search for a place or address"
           aria-expanded={listVisible}
           aria-controls={listVisible ? LISTBOX_ID : undefined}
           aria-autocomplete="list"
           aria-activedescendant={listVisible && active >= 0 ? optionId(active) : undefined}
-          placeholder="Szukaj miejscowości lub adresu"
+          placeholder="Search for a place or address"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
@@ -103,7 +103,7 @@ export function SearchBox({ onPick, className }: SearchBoxProps) {
         {query === '' ? null : (
           <button
             type="button"
-            aria-label="Wyczyść"
+            aria-label="Clear"
             onClick={() => {
               clear()
               setActive(-1)
@@ -120,15 +120,15 @@ export function SearchBox({ onPick, className }: SearchBoxProps) {
         <div className="absolute inset-x-0 top-full z-10 rounded-card border border-hairline bg-surface shadow-[0_1px_3px_rgba(5,28,44,0.08)]">
           {error ? (
             <div className="px-3 py-2.5">
-              <p className="label-micro">Błąd</p>
+              <p className="label-micro">Error</p>
               <p className="mt-0.5 text-xs text-ink">{error}</p>
             </div>
           ) : loading ? (
-            <p className="label-micro px-3 py-2.5">Szukam…</p>
+            <p className="label-micro px-3 py-2.5">Searching…</p>
           ) : results.length === 0 ? (
-            <p className="px-3 py-2.5 text-xs text-ink-muted">Brak wyników</p>
+            <p className="px-3 py-2.5 text-xs text-ink-muted">No results</p>
           ) : (
-            <ul role="listbox" id={LISTBOX_ID} aria-label="Podpowiedzi miejsc" className="divide-y divide-hairline">
+            <ul role="listbox" id={LISTBOX_ID} aria-label="Place suggestions" className="divide-y divide-hairline">
               {results.map((place, index) => {
                 const { name, context } = splitLabel(place.label)
                 return (

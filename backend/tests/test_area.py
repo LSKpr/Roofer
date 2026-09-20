@@ -81,26 +81,27 @@ def test_bbox_problem_names_the_inverted_corner() -> None:
     inverted_latitude = BoundingBox(south=51.30, west=21.00, north=51.25, east=21.10)
     inverted_longitude = BoundingBox(south=51.25, west=21.10, north=51.30, east=21.00)
 
-    assert "polnoc" in str(bbox_problem(inverted_latitude))
-    assert "wschod" in str(bbox_problem(inverted_longitude))
+    assert "north corner" in str(bbox_problem(inverted_latitude))
+    assert "east corner" in str(bbox_problem(inverted_longitude))
     assert bbox_problem(BoundingBox(south=51.25, west=21.00, north=51.30, east=21.10)) is None
 
 
 def test_bbox_problem_rejects_coordinates_outside_the_globe() -> None:
-    assert "Szerokosc" in str(bbox_problem(BoundingBox(south=-91.0, west=21.0, north=51.3, east=21.1)))
-    assert "Dlugosc" in str(bbox_problem(BoundingBox(south=51.2, west=21.0, north=51.3, east=181.0)))
+    assert "Latitude" in str(bbox_problem(BoundingBox(south=-91.0, west=21.0, north=51.3, east=21.1)))
+    assert "Longitude" in str(bbox_problem(BoundingBox(south=51.2, west=21.0, north=51.3, east=181.0)))
 
 
 def test_area_problem_quotes_both_numbers_and_stays_silent_below_the_limit() -> None:
     message = str(area_problem(41.2))
 
-    assert "41,2" in message
+    assert "41.2" in message
     assert "25" in message
     assert area_problem(MAX_AREA_KM2) is None
 
 
-def test_format_km2_uses_a_polish_decimal_comma_and_drops_a_trailing_zero() -> None:
-    assert format_km2(41.234) == "41,2"
+def test_format_km2_uses_a_decimal_point_and_drops_a_trailing_zero() -> None:
+    """Interfejs jest po angielsku, wiec liczba w komunikacie ma kropke, a nie przecinek."""
+    assert format_km2(41.234) == "41.2"
     assert format_km2(25.0) == "25"
 
 
@@ -204,7 +205,7 @@ def test_inverted_corners_are_rejected_without_touching_the_database() -> None:
         response = client.post("/api/area/scan", json=inverted)
 
     assert response.status_code == 400
-    assert "polnoc" in response.json()["detail"]
+    assert "north corner" in response.json()["detail"]
     assert pool.timeouts == []
 
 
@@ -244,4 +245,4 @@ def test_a_dead_database_degrades_to_503() -> None:
         response = client.post("/api/area/scan", json=SMALL_SELECTION)
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Baza nie odpowiada."
+    assert response.json()["detail"] == "The database is not responding."

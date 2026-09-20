@@ -23,10 +23,10 @@ export function RegistryToggle({ checked, onChange, className }: RegistryToggleP
 
   return (
     <section
-      aria-label="Podświetlenie rejestru"
+      aria-label="Register highlighting"
       className={`rounded-card border border-hairline bg-surface px-3 py-2 text-ink shadow-[0_1px_3px_rgba(5,28,44,0.08)] ${className ?? ''}`}
     >
-      <p className="label-micro">Rejestr</p>
+      <p className="label-micro">Register</p>
       <div className="mt-1.5 flex items-center gap-2">
         <input
           id={inputId}
@@ -38,7 +38,7 @@ export function RegistryToggle({ checked, onChange, className }: RegistryToggleP
           className="h-3.5 w-3.5 shrink-0 accent-accent focus-visible:outline-1 focus-visible:outline-accent"
         />
         <label htmlFor={inputId} className="text-xs leading-none text-ink">
-          Podświetl zgłoszone w rejestrze
+          Highlight buildings listed in the register
         </label>
       </div>
     </section>

@@ -47,7 +47,7 @@ export function usePlaceSearch(): PlaceSearchState {
       fetchPlaces(trimmed)
         .then((results) => current && setAnswer({ query: trimmed, results, error: null }))
         .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : 'Nieznany blad wyszukiwarki'
+          const message = error instanceof Error ? error.message : 'Unknown search error'
           return current && setAnswer({ query: trimmed, results: NOTHING, error: message })
         })
     }, SEARCH_DEBOUNCE_MS)

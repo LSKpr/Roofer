@@ -11,9 +11,9 @@ type RoofAnalysisProps = {
  * pokrycia, nie o azbescie: model widzi faliste, szare plyty, a nie material.
  */
 const VERDICT_TEXT: Record<Analysis['verdict'], string> = {
-  suspected: 'Podejrzenie pokrycia falistego, szarego (typ eternitu)',
-  unlikely: 'Model nie widzi pokrycia falistego, szarego',
-  unknown: 'Nie wiadomo, jakie to pokrycie',
+  suspected: 'Possible corrugated grey covering (eternit type)',
+  unlikely: 'The model does not see corrugated grey covering',
+  unknown: 'Not known what the covering is',
 }
 
 /**
@@ -41,14 +41,14 @@ function SourceNote({ source }: { source: Analysis['source'] }) {
   if (source === 'mock') {
     return (
       <p data-testid="analysis-mock-warning" className="label-micro border-b border-hairline pb-1.5 text-ink">
-        Wynik demonstracyjny · model niepodłączony
+        Demonstration result · no model connected
       </p>
     )
   }
   if (source === 'unavailable') {
     return (
       <p data-testid="analysis-unavailable-note" className="label-micro border-b border-hairline pb-1.5">
-        Analiza niedostępna · model nie odpowiedział
+        Analysis unavailable · the model did not respond
       </p>
     )
   }
@@ -62,7 +62,7 @@ function SourceNote({ source }: { source: Analysis['source'] }) {
  * zdjeciem dachu, tak samo jak RoofPhoto, wiec ramke i naglowek daje karta.
  */
 export function RoofAnalysis({ analysis, loading, error }: RoofAnalysisProps) {
-  if (loading) return <p className="text-ink-muted">Wczytuję analizę pokrycia…</p>
+  if (loading) return <p className="text-ink-muted">Loading the covering analysis…</p>
   // Nieudana analiza nie jest ostrzezeniem o dachu, wiec zostaje wyciszona, a nie czerwona.
   if (error) return <p data-testid="analysis-error" className="text-ink-muted">{error}</p>
   if (analysis === null) return null
@@ -83,10 +83,10 @@ export function RoofAnalysis({ analysis, loading, error }: RoofAnalysisProps) {
       </p>
 
       <div className="mt-3 border-t border-hairline pt-3">
-        <p className="label-micro">Prawdopodobieństwo</p>
+        <p className="label-micro">Probability</p>
         {analysis.probability === null ? (
           // Zero znaczyloby „model sprawdzil i nie widzi eternitu" — brak wyniku to inna informacja.
-          <p className="mt-1 text-ink-muted">Bez wyniku liczbowego — brak wyniku to nie to samo, co zero.</p>
+          <p className="mt-1 text-ink-muted">No numeric result — no result is not the same as zero.</p>
         ) : (
           <p
             data-testid="analysis-probability"
@@ -96,7 +96,7 @@ export function RoofAnalysis({ analysis, loading, error }: RoofAnalysisProps) {
           </p>
         )}
         {mock && analysis.probability !== null ? (
-          <p className="mt-1 text-xs text-ink-faint">Liczba jest przykładowa — nie policzył jej żaden model.</p>
+          <p className="mt-1 text-xs text-ink-faint">The number is illustrative — no model produced it.</p>
         ) : null}
       </div>
 

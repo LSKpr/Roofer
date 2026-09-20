@@ -6,7 +6,7 @@ import { BasemapSwitcher } from './BasemapSwitcher'
 it('pokazuje etykiety wszystkich podkladow z definicji stylow', () => {
   render(<BasemapSwitcher value="standard" onChange={() => {}} />)
 
-  expect(screen.getByText('Podkład')).toBeDefined()
+  expect(screen.getByText('Base map')).toBeDefined()
   for (const id of BASEMAP_IDS) {
     expect(screen.getByRole('button', { name: BASEMAPS[id].label })).toBeDefined()
   }

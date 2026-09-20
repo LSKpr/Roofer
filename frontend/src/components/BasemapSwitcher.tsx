@@ -17,10 +17,10 @@ type BasemapSwitcherProps = {
 export function BasemapSwitcher({ value, onChange, className }: BasemapSwitcherProps) {
   return (
     <section
-      aria-label="Podkład mapy"
+      aria-label="Base map"
       className={`rounded-card border border-hairline bg-surface px-3 py-2 text-ink shadow-[0_1px_3px_rgba(5,28,44,0.08)] ${className ?? ''}`}
     >
-      <p className="label-micro">Podkład</p>
+      <p className="label-micro">Base map</p>
       {/* Ramka i wlosowe linie miedzy przyciskami: rzad ma czytac sie jako jedno pole wyboru. */}
       <div className="mt-1.5 flex divide-x divide-hairline border border-hairline">
         {BASEMAP_IDS.map((id) => {

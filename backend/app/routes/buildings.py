@@ -72,7 +72,7 @@ async def building(osm_id: int, request: Request) -> Building:
     try:
         row = await read_building(request.app.state.pool, osm_id, settings.database_timeout_s)
     except Exception as error:  # padnieta baza to 503, nie 500 z traceba w logu
-        raise HTTPException(status_code=503, detail="Baza nie odpowiada.") from error
+        raise HTTPException(status_code=503, detail="The database is not responding.") from error
     if row is None:
-        raise HTTPException(status_code=404, detail="Nie ma budynku o tym identyfikatorze.")
+        raise HTTPException(status_code=404, detail="There is no building with this identifier.")
     return to_building(row)

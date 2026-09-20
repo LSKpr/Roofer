@@ -59,9 +59,9 @@ async def analysis(osm_id: int, request: Request) -> RoofAnalysisResponse:
     try:
         shape = await read_building_shape(request.app.state.pool, osm_id, settings.database_timeout_s)
     except Exception as error:  # padnieta baza to 503, nie 500 z tracebackiem
-        raise HTTPException(status_code=503, detail="Baza nie odpowiada.") from error
+        raise HTTPException(status_code=503, detail="The database is not responding.") from error
     if shape is None:
-        raise HTTPException(status_code=404, detail="Nie ma budynku o tym identyfikatorze.")
+        raise HTTPException(status_code=404, detail="There is no building with this identifier.")
 
     provider = get_provider(request.app)
     try:

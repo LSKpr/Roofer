@@ -67,17 +67,17 @@ export type RoofAnalysis = {
   /** 0–1 albo null. */
   probability: number | null
   modelName: string | null
-  /** Zdanie po polsku, gotowe do pokazania: co ten wynik znaczy i czego nie dowodzi. */
+  /** Zdanie gotowe do pokazania: co ten wynik znaczy i czego nie dowodzi. */
   note: string
 }
 
 export async function fetchRoofAnalysis(id: number, baseUrl: string = API_BASE_URL): Promise<RoofAnalysis> {
   const response = await fetch(`${baseUrl}/api/buildings/${id}/analysis`)
   if (response.status === 404) {
-    throw new Error('Nie ma budynku o tym identyfikatorze.')
+    throw new Error('There is no building with this identifier.')
   }
   if (response.status !== 200) {
-    throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+    throw new Error(`Backend responded with status ${response.status}`)
   }
   return (await response.json()) as RoofAnalysis
 }
@@ -116,7 +116,7 @@ export type AreaScan = {
 /** Limit powierzchni zaznaczenia. Front pyta backend, zamiast trzymac wlasna kopie tej liczby. */
 export async function fetchAreaLimits(baseUrl: string = API_BASE_URL): Promise<{ maxAreaKm2: number }> {
   const response = await fetch(`${baseUrl}/api/area/limits`)
-  if (response.status !== 200) throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+  if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
   return (await response.json()) as { maxAreaKm2: number }
 }
 
@@ -132,9 +132,9 @@ export async function fetchAreaScan(bounds: Bounds, baseUrl: string = API_BASE_U
   })
   if (response.status === 400 || response.status === 503) {
     const body = (await response.json()) as { detail?: string }
-    throw new Error(body.detail ?? 'Nie udało się przeskanować obszaru.')
+    throw new Error(body.detail ?? 'Could not scan the area.')
   }
-  if (response.status !== 200) throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+  if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
   return (await response.json()) as AreaScan
 }
 
@@ -154,7 +154,7 @@ export type Place = {
 export async function fetchHealth(baseUrl: string = API_BASE_URL): Promise<Health> {
   const response = await fetch(`${baseUrl}/api/health`)
   if (response.status !== 200 && response.status !== 503) {
-    throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+    throw new Error(`Backend responded with status ${response.status}`)
   }
   return (await response.json()) as Health
 }
@@ -167,13 +167,13 @@ export async function fetchPlaces(query: string, limit = 5, baseUrl: string = AP
   const search = new URLSearchParams({ q: query, limit: String(limit) })
   const response = await fetch(`${baseUrl}/api/geocode?${search}`)
   if (response.status === 429) {
-    throw new Error('Za dużo zapytań do wyszukiwarki. Spróbuj ponownie za chwilę.')
+    throw new Error('Too many search requests. Try again in a moment.')
   }
   if (response.status === 503) {
-    throw new Error('Wyszukiwarka miejsc nie odpowiada.')
+    throw new Error('The place search is not responding.')
   }
   if (response.status !== 200) {
-    throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+    throw new Error(`Backend responded with status ${response.status}`)
   }
   const body = (await response.json()) as { results: Place[] }
   return body.results
@@ -182,10 +182,10 @@ export async function fetchPlaces(query: string, limit = 5, baseUrl: string = AP
 export async function fetchBuilding(id: number, baseUrl: string = API_BASE_URL): Promise<Building> {
   const response = await fetch(`${baseUrl}/api/buildings/${id}`)
   if (response.status === 404) {
-    throw new Error('Nie ma budynku o tym identyfikatorze.')
+    throw new Error('There is no building with this identifier.')
   }
   if (response.status !== 200) {
-    throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+    throw new Error(`Backend responded with status ${response.status}`)
   }
   return (await response.json()) as Building
 }

@@ -102,8 +102,16 @@ def test_clamp_limit_keeps_the_request_inside_our_range() -> None:
     assert (clamp_limit(0), clamp_limit(5), clamp_limit(50)) == (1, 5, 10)
 
 
-def test_search_params_ask_nominatim_only_about_poland() -> None:
-    assert search_params("zwolen", 5) == {"format": "jsonv2", "countrycodes": "pl", "limit": "5", "q": "zwolen"}
+def test_search_params_ask_nominatim_only_about_poland_and_in_english() -> None:
+    """`accept-language=en` dotyczy tego, co uzytkownik czyta: „Masovian Voivodeship, Poland"
+    zamiast „wojewodztwo mazowieckie". Nazwy wlasne miejscowosci zostaja polskie i tak ma byc."""
+    assert search_params("zwolen", 5) == {
+        "format": "jsonv2",
+        "countrycodes": "pl",
+        "accept-language": "en",
+        "limit": "5",
+        "q": "zwolen",
+    }
 
 
 def test_bounding_box_is_reordered_from_nominatim_to_south_west_north_east() -> None:
@@ -188,6 +196,17 @@ def test_request_carries_a_user_agent_that_identifies_the_application() -> None:
     assert calls[0].url.params["limit"] == "3"
 
 
+def test_the_request_asks_nominatim_for_english_labels() -> None:
+    """Podpowiedzi czyta uzytkownik angielskiego interfejsu, wiec parametr musi dolecec do zrodla,
+    a nie tylko stac w `search_params`."""
+    calls: list[httpx.Request] = []
+
+    with client_with(serving(NOMINATIM_JSON, calls)) as client:
+        client.get("/api/geocode", params={"q": "Zwolen"})
+
+    assert calls[0].url.params["accept-language"] == "en"
+
+
 def test_a_repeated_search_is_served_from_the_cache_without_touching_the_network() -> None:
     calls: list[httpx.Request] = []
 
@@ -206,11 +225,11 @@ def test_an_empty_query_is_rejected_before_any_request() -> None:
         response = client.get("/api/geocode", params={"q": "   "})
 
     assert response.status_code == 400
-    assert "miejscowosci" in response.json()["detail"]
+    assert "place name" in response.json()["detail"]
     assert calls == []
 
 
-def test_a_timeout_degrades_to_503_with_a_polish_message() -> None:
+def test_a_timeout_degrades_to_503_with_a_message_for_the_user() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("zbyt dlugo", request=request)
 
@@ -249,5 +268,5 @@ def test_a_second_search_within_the_same_second_answers_429() -> None:
 
     assert first.status_code == 200
     assert second.status_code == 429
-    assert "chwile" in second.json()["detail"]
+    assert "Try again in a moment" in second.json()["detail"]
     assert len(calls) == 1

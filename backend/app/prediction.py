@@ -77,35 +77,40 @@ FROM osm_buildings b
 WHERE b.osm_id = %(id)s::text
 """
 
-# Noty sa tekstem, ktory czyta urzednik w karcie budynku, wiec pisane sa poprawna polszczyzna
-# z diakrytykami. Zasada „bez znakow diakrytycznych" dotyczy komentarzy i identyfikatorow w kodzie,
-# a nie komunikatow — te bez ogonkow wygladaly w interfejsie na usterke.
+# Noty sa tekstem, ktory czyta urzednik w karcie budynku, a interfejs jest po angielsku — wiec
+# same noty tez sa po angielsku. Zasada „bez znakow diakrytycznych" dotyczy komentarzy
+# i identyfikatorow w kodzie, a nie komunikatow.
+#
+# Trzy zdania musza przetrwac kazda zmiane tych napisow: brak wyniku to nie ocena zero, model
+# rozpoznaje wyglad pokrycia (a nie material i nie potwierdzenie azbestu) i patrzy na inne zdjecie
+# niz ortofotomapa GUGiK w karcie. Pilnuja tego testy w tests/test_prediction.py.
 MOCK_SUSPECTED_NOTE = (
-    "Wynik demonstracyjny, bez modelu ML — liczba pochodzi ze skrótu identyfikatora budynku, "
-    "nie ze zdjęcia. Docelowy model rozpoznaje faliste, szare pokrycie typowe dla eternitu, "
-    "a nie obecność azbestu w dachu."
+    "Demonstration result, no ML model — the number comes from a hash of the building identifier, "
+    "not from a photo. The eventual model recognises the look of the covering, not the material: "
+    "wavy grey sheets typical of cement-asbestos, not the presence of asbestos in the roof."
 )
 
 MOCK_UNLIKELY_NOTE = (
-    "Wynik demonstracyjny, bez modelu ML — liczba pochodzi ze skrótu identyfikatora budynku, "
-    "nie ze zdjęcia. Niska ocena niczego nie dowodzi: docelowy model patrzy tylko na to, czy "
-    "pokrycie wygląda na faliste i szare jak eternit."
+    "Demonstration result, no ML model — the number comes from a hash of the building identifier, "
+    "not from a photo. A low score proves nothing: the eventual model only looks at whether the "
+    "covering looks wavy and grey like cement-asbestos sheeting."
 )
 
 MOCK_UNKNOWN_NOTE = (
-    "Wynik demonstracyjny, bez modelu ML — dla tego budynku atrapa nie oddaje oceny, tak jak "
-    "docelowy model przy braku zdjęcia okolicy. Brak oceny to nie to samo co ocena zero."
+    "Demonstration result, no ML model — for this building the mock returns nothing, just as the "
+    "eventual model returns nothing when there is no imagery of the area. No result is not the "
+    "same as zero."
 )
 
 UNAVAILABLE_NOTE = (
-    "Ocena pokrycia dachu nie jest skonfigurowana, więc nie ma żadnego wyniku — a brak wyniku to "
-    "nie to samo co ocena zero. Model, gdy się pojawi, będzie rozpoznawał faliste, szare pokrycie "
-    "typowe dla eternitu, a nie obecność azbestu."
+    "Roof covering analysis is not configured, so there is no score at all — and no result is not "
+    "the same as zero. Once the model is connected it will recognise the look of the covering, "
+    "not the material: wavy grey sheets typical of cement-asbestos."
 )
 
 PROVIDER_ERROR_NOTE = (
-    "Serwis oceny pokrycia dachu nie odpowiedział, więc nie ma wyniku — brak wyniku to nie to "
-    "samo co ocena zero. Spróbuj ponownie za chwilę."
+    "The roof covering analysis service did not answer, so there is no score — no result is not "
+    "the same as zero. Try again in a moment."
 )
 
 
@@ -266,33 +271,36 @@ ANALYZE_PATH = "/v1/analyze"
 MODEL_STATUS_OK = "ok"
 
 STATUS_NOTES = {
-    "low_quality": "zdjęcie nie przeszło kontroli jakości",
-    "imagery_error": "nie udało się pobrać zdjęcia okolicy",
-    "geometry_error": "nie udało się wyznaczyć punktu wewnątrz dachu",
+    "low_quality": "the photo did not pass the quality check",
+    "imagery_error": "the imagery of the area could not be fetched",
+    "geometry_error": "no point inside the roof could be determined",
 }
+
+# Powod podawany w nocie, gdy serwis nie przyslal ani `reasons`, ani rozpoznawalnego statusu.
+UNKNOWN_REASON = "no reason given"
 
 # Model patrzy na INNE zdjecie niz to, ktore uzytkownik widzi w karcie: on na Google Satellite
 # z zoomu 20, my pokazujemy ortofotomape GUGiK. Bez tego zdania ktos porownalby ocene z kadrem
 # obok i wyciagnal wniosek z dwoch roznych zrodel. Skutecznosc podana przez autora modelu.
 MODEL_IMAGERY_NOTE = (
-    "Ocena z jednego zdjęcia satelitarnego Google (zoom 20), a nie z ortofotomapy GUGiK pokazanej "
-    "w tej karcie — model i zdjęcie obok to dwa różne źródła. Model rozpoznaje wygląd pokrycia, "
-    "nie materiał: autor podaje skuteczność 77% i wykrywalność azbestu 63%, więc wynik jest "
-    "wskazówką do oględzin, a nie rozstrzygnięciem."
+    "Scored from a single photo from Google Satellite (zoom 20), not the GUGiK aerial imagery "
+    "shown in this card — the model and the photo beside it are two different sources. The model "
+    "recognises the look of the covering, not the material: its author reports 77% accuracy and "
+    "63% asbestos recall, so the score is a hint for an inspection, not a ruling."
 )
 
 MODEL_NO_RESULT_NOTE = (
-    "Model nie ocenił tego dachu ({powod}), więc nie ma wyniku — a brak wyniku to nie to samo "
-    "co ocena zero. Reszta karty pozostaje aktualna."
+    "The model did not score this roof ({powod}), so there is no result — and no result is not "
+    "the same as zero. The rest of the card still holds."
 )
 
 MODEL_MISSING_NOTE = (
-    "Serwis oceny nie zwrócił tego budynku, więc nie ma wyniku. Brak wyniku to nie to samo co ocena zero."
+    "The analysis service did not return this building, so there is no result. No result is not the same as zero."
 )
 
 MODEL_BUSY_NOTE = (
-    "Serwis oceny jest zajęty i poprosił o przerwę ({seconds} s), więc nie ma teraz wyniku. "
-    "Spróbuj ponownie za chwilę — brak wyniku to nie to samo co ocena zero."
+    "The analysis service is busy and asked for a pause ({seconds} s), so there is no result right "
+    "now. Try again in a moment — no result is not the same as zero."
 )
 
 
@@ -335,7 +343,11 @@ def analysis_from_properties(properties: dict[str, Any], model_id: str | None) -
     probability = properties.get("asbestos_probability")
     if status != MODEL_STATUS_OK or probability is None:
         reasons = properties.get("reasons") or []
-        detail = ", ".join(str(reason) for reason in reasons) if reasons else STATUS_NOTES.get(status, status or "brak")
+        detail = (
+            ", ".join(str(reason) for reason in reasons)
+            if reasons
+            else STATUS_NOTES.get(status, status or UNKNOWN_REASON)
+        )
         return RoofAnalysis(
             source="model",
             verdict="unknown",
@@ -434,7 +446,7 @@ class HttpModelProvider:
             return unavailable_analysis(PROVIDER_ERROR_NOTE)
 
         if response.status_code == 429:
-            return unavailable_analysis(MODEL_BUSY_NOTE.format(seconds=response.headers.get("Retry-After", "kilka")))
+            return unavailable_analysis(MODEL_BUSY_NOTE.format(seconds=response.headers.get("Retry-After", "a few")))
         if response.status_code != 200:
             return unavailable_analysis(PROVIDER_ERROR_NOTE)
 

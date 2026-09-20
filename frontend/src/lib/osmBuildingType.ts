@@ -1,79 +1,91 @@
 /**
- * Rodzaje budynków z OpenStreetMap po polsku.
+ * Rodzaje budynkow z OpenStreetMap jako etykiety dla uzytkownika.
  *
- * Tłumaczenie jest interpretacją, więc surowa wartość tagu zostaje widoczna obok: kto weryfikuje
- * dane w OSM albo poprawia je u źródła, musi wiedzieć, jaki tag tam naprawdę stoi. Nieznanego
- * rodzaju nie tłumaczymy na siłę — lepiej pokazać `barn` niż zgadywać.
+ * Etykieta jest interpretacja tagu, wiec surowa wartosc tagu zostaje widoczna obok: kto weryfikuje
+ * dane w OSM albo poprawia je u zrodla, musi wiedziec, jaki tag tam naprawde stoi. Nieznanego
+ * rodzaju nie tlumaczymy na sile — lepiej pokazac `barn` niz zgadywac.
  *
- * Lista pokrywa rodzaje, które faktycznie występują w snapshocie mazowieckiego (policzone na
- * próbce 120 000 budynków); `fclass` z Geofabrik jest bezużyteczne, bo dla wszystkich 2 585 219
- * budynków ma wartość `building`.
+ * Klucze OSM sa juz angielskie, wiec przy interfejsie po angielsku czesc wpisow to to samo slowo
+ * po obu stronach (`garage`, `barn`, `hotel`). Zostaja w mapie, bo znacza „ten tag widzielismy
+ * w danych i nie wymaga tlumaczenia" — czego samo wpadniecie w galaz dla nieznanego tagu nie
+ * odroznia od tagu, ktorego nikt nigdy nie sprawdzil. Zamiast tego `buildingTypeLabel` nie doklada
+ * tagu, gdy etykieta jest z nim identyczna: „garage · garage" wygladalo jak usterka interfejsu,
+ * a nie jak podane zrodlo. Przy tagu nieoczywistym (`farm_auxiliary`, `sty`, `roof`) etykieta
+ * niesie tresc, ktorej w tagu nie ma, wiec tag zostaje obok niej.
+ *
+ * Lista pokrywa rodzaje, ktore faktycznie wystepuja w snapshocie mazowieckiego (policzone na
+ * probce 120 000 budynkow); `fclass` z Geofabrik jest bezuzyteczne, bo dla wszystkich 2 585 219
+ * budynkow ma wartosc `building`.
  */
 const LABELS: Record<string, string> = {
-  house: 'dom jednorodzinny',
-  detached: 'dom wolnostojący',
-  semidetached_house: 'bliźniak',
-  terrace: 'zabudowa szeregowa',
-  apartments: 'budynek wielorodzinny',
-  residential: 'budynek mieszkalny',
-  dormitory: 'akademik',
-  outbuilding: 'budynek gospodarczy',
-  farm_auxiliary: 'budynek gospodarczy',
-  farm: 'budynek gospodarstwa',
-  barn: 'stodoła',
-  cowshed: 'obora',
-  stable: 'stajnia',
-  sty: 'chlewnia',
-  greenhouse: 'szklarnia',
-  garage: 'garaż',
-  garages: 'garaże',
-  carport: 'zadaszenie na samochód',
-  shed: 'szopa',
-  hut: 'chata',
-  cabin: 'domek',
-  bungalow: 'domek letniskowy',
-  service: 'budynek techniczny',
-  transformer_tower: 'stacja transformatorowa',
-  retail: 'budynek handlowy',
-  commercial: 'budynek usługowy',
+  house: 'single-family house',
+  detached: 'detached house',
+  semidetached_house: 'semi-detached house',
+  terrace: 'terraced housing',
+  apartments: 'apartment building',
+  residential: 'residential building',
+  dormitory: 'dormitory',
+  outbuilding: 'outbuilding',
+  farm_auxiliary: 'farm outbuilding',
+  farm: 'farmhouse',
+  barn: 'barn',
+  cowshed: 'cowshed',
+  stable: 'stable',
+  sty: 'pigsty',
+  greenhouse: 'greenhouse',
+  garage: 'garage',
+  garages: 'garage block',
+  carport: 'carport',
+  shed: 'shed',
+  hut: 'hut',
+  cabin: 'cabin',
+  bungalow: 'holiday home',
+  service: 'utility building',
+  transformer_tower: 'transformer tower',
+  retail: 'retail building',
+  commercial: 'commercial building',
   supermarket: 'supermarket',
   kiosk: 'kiosk',
-  office: 'biurowiec',
-  industrial: 'budynek przemysłowy',
-  manufacture: 'budynek produkcyjny',
-  warehouse: 'magazyn',
-  church: 'kościół',
-  chapel: 'kaplica',
-  school: 'szkoła',
-  kindergarten: 'przedszkole',
-  university: 'budynek uczelni',
-  hospital: 'szpital',
+  office: 'office building',
+  industrial: 'industrial building',
+  manufacture: 'manufacturing building',
+  warehouse: 'warehouse',
+  church: 'church',
+  chapel: 'chapel',
+  school: 'school',
+  kindergarten: 'kindergarten',
+  university: 'university building',
+  hospital: 'hospital',
   hotel: 'hotel',
-  civic: 'budynek publiczny',
-  government: 'budynek urzędu',
-  public: 'budynek publiczny',
-  sports_hall: 'hala sportowa',
-  train_station: 'dworzec kolejowy',
-  toilets: 'toaleta',
-  roof: 'zadaszenie',
-  construction: 'budynek w budowie',
-  ruins: 'ruina',
+  civic: 'public building',
+  government: 'government building',
+  public: 'public building',
+  sports_hall: 'sports hall',
+  train_station: 'railway station',
+  toilets: 'toilets',
+  roof: 'canopy',
+  construction: 'building under construction',
+  ruins: 'ruin',
 }
 
 /**
- * Etykieta rodzaju albo `null`, gdy OSM go nie podaje (tak jest u ~35% budynków).
- * Znany rodzaj wraca jako „polski opis · surowy tag", nieznany jako sam tag.
+ * Etykieta rodzaju albo `null`, gdy OSM go nie podaje (tak jest u ~35% budynkow).
+ *
+ * Rodzaj opisany inaczej niz sam tag wraca jako „etykieta · surowy tag", bo tag jest tu zrodlem,
+ * ktore da sie sprawdzic w OSM. Gdy etykieta jest dokladnie tagiem, tag nie wraca drugi raz
+ * (`garage`, a nie „garage · garage"), a nieznany rodzaj wraca jako sam tag.
  */
 export function buildingTypeLabel(osmType: string | null | undefined): string | null {
   const raw = osmType?.trim()
   if (!raw) return null
   const label = LABELS[raw]
-  return label ? `${label} · ${raw}` : raw
+  if (!label) return raw
+  return label === raw ? label : `${label} · ${raw}`
 }
 
 /**
- * Sama nazwa rodzaju, bez surowego tagu — do nagłówka karty, gdzie liczy się zwięzłość.
- * W wierszu danych pokazujemy pełną etykietę z tagiem, bo tam chodzi o weryfikowalność.
+ * Sama nazwa rodzaju, bez surowego tagu — do naglowka karty, gdzie liczy sie zwieziosc.
+ * W wierszu danych pokazujemy pelna etykiete z tagiem, bo tam chodzi o weryfikowalnosc.
  */
 export function buildingTypeName(osmType: string | null | undefined): string | null {
   const raw = osmType?.trim()

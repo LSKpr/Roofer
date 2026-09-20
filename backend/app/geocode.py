@@ -14,7 +14,7 @@ sie blokada adresu IP. Dlatego w tym pliku sa:
   polaczenie TLS do Nominatima przy kazdym nacisnieciu klawisza.
 
 Padniety Nominatim nie moze wywalic naszego API: kazdy blad sieci konczy sie 503
-z komunikatem po polsku, nigdy 500 z tracebackiem.
+z komunikatem dla uzytkownika (po angielsku, bo taki jest interfejs), nigdy 500 z tracebackiem.
 """
 
 import asyncio
@@ -35,7 +35,7 @@ MAX_LIMIT = 10
 
 
 class GeocodeError(Exception):
-    """Blad wyszukiwania z gotowym kodem HTTP i komunikatem po polsku."""
+    """Blad wyszukiwania z gotowym kodem HTTP i komunikatem widocznym w interfejsie."""
 
     def __init__(self, status_code: int, detail: str) -> None:
         super().__init__(detail)
@@ -45,17 +45,17 @@ class GeocodeError(Exception):
 
 class EmptyQueryError(GeocodeError):
     def __init__(self) -> None:
-        super().__init__(400, "Podaj nazwe miejscowosci albo adres do wyszukania.")
+        super().__init__(400, "Enter a place name or an address to search for.")
 
 
 class RateLimitedError(GeocodeError):
     def __init__(self) -> None:
-        super().__init__(429, "Za duzo zapytan do wyszukiwarki miejsc. Sprobuj ponownie za chwile.")
+        super().__init__(429, "Too many requests to the place search. Try again in a moment.")
 
 
 class UpstreamError(GeocodeError):
     def __init__(self) -> None:
-        super().__init__(503, "Wyszukiwarka miejsc (Nominatim) nie odpowiada. Sprobuj ponownie za chwile.")
+        super().__init__(503, "The place search (Nominatim) is not responding. Try again in a moment.")
 
 
 def normalize_query(raw: str) -> str:
@@ -68,8 +68,20 @@ def clamp_limit(limit: int) -> int:
 
 
 def search_params(query: str, limit: int) -> dict[str, str]:
-    """`jsonv2` daje `addresstype` i `boundingbox`, `countrycodes=pl` obcina wyniki spoza Polski."""
-    return {"format": "jsonv2", "countrycodes": "pl", "limit": str(clamp_limit(limit)), "q": query}
+    """`jsonv2` daje `addresstype` i `boundingbox`, `countrycodes=pl` obcina wyniki spoza Polski.
+
+    `accept-language=en` dotyczy tego, co uzytkownik czyta w podpowiedziach: interfejs jest po
+    angielsku, wiec podzialy administracyjne maja brzmiec „Masovian Voivodeship, Poland", a nie
+    „wojewodztwo mazowieckie". Nazwy wlasne miejscowosci Nominatim i tak oddaje po polsku
+    („Zwolen", „Warszawa") — i tak ma byc, bo to sa ich nazwy.
+    """
+    return {
+        "format": "jsonv2",
+        "countrycodes": "pl",
+        "accept-language": "en",
+        "limit": str(clamp_limit(limit)),
+        "q": query,
+    }
 
 
 def to_bbox(raw: Any) -> list[float] | None:

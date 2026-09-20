@@ -3,13 +3,14 @@ import { expect, it } from 'vitest'
 import type { RoofAnalysis as Analysis } from '../api/client'
 import { RoofAnalysis } from './RoofAnalysis'
 
+/** `note` przychodzi gotowe z backendu — komponent tylko je pokazuje, wiec atrapa je nasladuje. */
 function anAnalysis(overrides: Partial<Analysis> = {}): Analysis {
   return {
     source: 'model',
     verdict: 'suspected',
     probability: 0.72,
     modelName: 'eternit-v1',
-    note: 'Ocena z jednego zdjęcia lotniczego. Nie zastępuje oględzin ani badania próbki.',
+    note: 'Scored from a single aerial photo. It does not replace an inspection or a sample test.',
     ...overrides,
   }
 }
@@ -21,27 +22,27 @@ function renderAnalysis(analysis: Analysis | null) {
 it('pokazuje werdykt slownie dla podejrzenia, razem ze znacznikiem rejestru', () => {
   renderAnalysis(anAnalysis({ verdict: 'suspected' }))
 
-  expect(screen.getByText('Podejrzenie pokrycia falistego, szarego (typ eternitu)')).toBeDefined()
+  expect(screen.getByText('Possible corrugated grey covering (eternit type)')).toBeDefined()
   expect(screen.getByTestId('analysis-dot').className).toContain('bg-listed')
 })
 
 it('pokazuje werdykt slownie, gdy model nie widzi takiego pokrycia', () => {
   renderAnalysis(anAnalysis({ verdict: 'unlikely', probability: 0.06 }))
 
-  expect(screen.getByText('Model nie widzi pokrycia falistego, szarego')).toBeDefined()
+  expect(screen.getByText('The model does not see corrugated grey covering')).toBeDefined()
 })
 
 it('pokazuje werdykt slownie, gdy nie wiadomo', () => {
   renderAnalysis(anAnalysis({ verdict: 'unknown', probability: null }))
 
-  expect(screen.getByText('Nie wiadomo, jakie to pokrycie')).toBeDefined()
+  expect(screen.getByText('Not known what the covering is')).toBeDefined()
 })
 
 it('podaje prawdopodobienstwo jako procent', () => {
   renderAnalysis(anAnalysis({ probability: 0.72 }))
 
   expect(screen.getByTestId('analysis-probability').textContent).toBe('72%')
-  expect(screen.getByText('Prawdopodobieństwo')).toBeDefined()
+  expect(screen.getByText('Probability')).toBeDefined()
 })
 
 it('procent z modelu jest liczba prowadzaca sekcji: szeryfowy i w kolorze tekstu', () => {
@@ -59,19 +60,19 @@ it('przy braku wyniku nie pokazuje zadnego procentu, tylko mowi, ze wyniku nie m
   expect(screen.queryByTestId('analysis-probability')).toBeNull()
   // Zero znaczyloby „model sprawdzil i nie widzi eternitu", a to inna informacja niz brak wyniku.
   expect(view.container.textContent ?? '').not.toMatch(/\d\s?%/)
-  expect(screen.getByText(/Bez wyniku liczbowego/)).toBeDefined()
-  expect(screen.getByText(/nie to samo, co zero/)).toBeDefined()
+  expect(screen.getByText(/No numeric result/)).toBeDefined()
+  expect(screen.getByText(/not the same as zero/)).toBeDefined()
 })
 
 it('ostrzega przy werdykcie, ze wynik demonstracyjny nie pochodzi z modelu', () => {
   renderAnalysis(anAnalysis({ source: 'mock', probability: 0.72 }))
 
   const warning = screen.getByTestId('analysis-mock-warning')
-  expect(warning.textContent).toBe('Wynik demonstracyjny · model niepodłączony')
+  expect(warning.textContent).toBe('Demonstration result · no model connected')
   // Ostrzezenie stoi nad werdyktem, a nie drobnym druczkiem na koncu sekcji.
   expect(screen.getByTestId('roof-analysis').firstChild).toBe(warning)
   expect(warning.className).toContain('label-micro')
-  expect(screen.getByText(/nie policzył jej żaden model/)).toBeDefined()
+  expect(screen.getByText(/no model produced it/)).toBeDefined()
 })
 
 it('wyszarza sam procent, gdy wynik jest demonstracyjny', () => {
@@ -85,13 +86,13 @@ it('nie ostrzega o demonstracji, gdy wynik jest z modelu', () => {
 
   expect(screen.queryByTestId('analysis-mock-warning')).toBeNull()
   const text = view.container.textContent ?? ''
-  expect(text).not.toMatch(/demonstracyjny|przykładowa|niepodłączony/i)
+  expect(text).not.toMatch(/demonstration|illustrative|no model connected/i)
 })
 
 it('mowi spokojnie, ze analiza jest niedostepna, bez czerwieni ostrzegawczej', () => {
   const view = renderAnalysis(anAnalysis({ source: 'unavailable', verdict: 'unknown', probability: null }))
 
-  expect(screen.getByTestId('analysis-unavailable-note').textContent).toMatch(/niedostępna/i)
+  expect(screen.getByTestId('analysis-unavailable-note').textContent).toMatch(/unavailable/i)
   expect(screen.queryByTestId('analysis-mock-warning')).toBeNull()
   const markup = view.container.innerHTML
   expect(markup).not.toContain('text-listed')
@@ -99,7 +100,7 @@ it('mowi spokojnie, ze analiza jest niedostepna, bez czerwieni ostrzegawczej', (
 })
 
 it('pokazuje zastrzezenie z backendu wyciszonym drukiem', () => {
-  const note = 'Model ocenia wygląd pokrycia ze zdjęcia, nie materiał.'
+  const note = 'The model scores the look of the covering in the photo, not the material.'
   renderAnalysis(anAnalysis({ note }))
 
   const element = screen.getByText(note)
@@ -122,15 +123,15 @@ it('nie podpisuje wyniku, gdy nazwy modelu nie ma', () => {
 it('informuje o wczytywaniu i nie pokazuje przy tym starej oceny', () => {
   render(<RoofAnalysis analysis={anAnalysis()} loading={true} error={null} />)
 
-  expect(screen.getByText('Wczytuję analizę pokrycia…')).toBeDefined()
+  expect(screen.getByText('Loading the covering analysis…')).toBeDefined()
   expect(screen.queryByTestId('roof-analysis')).toBeNull()
 })
 
 it('pokazuje komunikat bledu zamiast oceny', () => {
-  render(<RoofAnalysis analysis={null} loading={false} error="Backend odpowiedział kodem 503" />)
+  render(<RoofAnalysis analysis={null} loading={false} error="Backend responded with status 503" />)
 
   const element = screen.getByTestId('analysis-error')
-  expect(element.textContent).toBe('Backend odpowiedział kodem 503')
+  expect(element.textContent).toBe('Backend responded with status 503')
   expect(element.className).not.toContain('text-listed')
 })
 
@@ -163,7 +164,9 @@ it('nie uzywa slownictwa sugerujacego pomiar azbestu', () => {
   for (const analysis of cases) {
     const view = renderAnalysis(analysis)
     const text = view.container.textContent ?? ''
-    expect(text).not.toMatch(/wykryto azbest|brak azbestu|bezpieczny|czysty dach/i)
+    // Werdykt mowi o wygladzie pokrycia, nigdy o materiale i nigdy o stanie dachu: ani „wykryto
+    // azbest", ani zapewnienie, ze azbestu nie ma albo ze dach jest czysty czy bezpieczny.
+    expect(text).not.toMatch(/detected|asbestos-free|no asbestos|safe|clean/i)
     view.unmount()
   }
 })

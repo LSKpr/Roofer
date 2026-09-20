@@ -32,7 +32,7 @@ export function useRoofAnalysis(buildingId: number | null): RoofAnalysisState {
     fetchRoofAnalysis(buildingId)
       .then((analysis) => current && setAnswer({ id: buildingId, state: { analysis, loading: false, error: null } }))
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'Nie udało się wczytać analizy pokrycia dachu.'
+        const message = error instanceof Error ? error.message : 'Could not load the roof covering analysis.'
         return current && setAnswer({ id: buildingId, state: { analysis: null, loading: false, error: message } })
       })
     return () => {

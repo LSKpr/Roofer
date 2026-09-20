@@ -11,7 +11,7 @@ export const OSM_ATTRIBUTION = '© OpenStreetMap contributors'
  * Atrybucja jest wymogiem regulaminu uslugi, wiec siedzi przy definicji podkladu, a nie
  * w komponencie, ktory ktos moze pominac.
  */
-export const ORTHOPHOTO_ATTRIBUTION = 'Ortofotomapa: GUGiK / Geoportal.gov.pl'
+export const ORTHOPHOTO_ATTRIBUTION = 'Aerial imagery: GUGiK / Geoportal.gov.pl'
 
 /**
  * CARTO Positron: usluga zewnetrzna, darmowa pod warunkiem zachowania atrybucji. Przed publicznym
@@ -103,10 +103,10 @@ export type Basemap = {
 }
 
 export const BASEMAPS: Record<BasemapId, Basemap> = {
-  standard: { id: 'standard', label: 'Mapa', style: standardStyle, attribution: OSM_ATTRIBUTION },
+  standard: { id: 'standard', label: 'Map', style: standardStyle, attribution: OSM_ATTRIBUTION },
   orthophoto: {
     id: 'orthophoto',
-    label: 'Ortofoto',
+    label: 'Aerial',
     style: orthophotoStyle,
     attribution: ORTHOPHOTO_ATTRIBUTION,
   },

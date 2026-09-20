@@ -28,7 +28,7 @@ export function useBuilding(id: number | null): BuildingState {
     fetchBuilding(id)
       .then((building) => current && setAnswer({ id, state: { building, loading: false, error: null } }))
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'Nieznany blad'
+        const message = error instanceof Error ? error.message : 'Could not load the building.'
         return current && setAnswer({ id, state: { building: null, loading: false, error: message } })
       })
     return () => {

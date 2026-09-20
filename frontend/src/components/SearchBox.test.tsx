@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SearchBox } from './SearchBox'
 import { SEARCH_DEBOUNCE_MS } from '../hooks/usePlaceSearch'
-import type { Place } from '../api/client'
+import { fetchPlaces, type Place } from '../api/client'
 
 const ZWOLEN: Place = {
   label: 'Zwoleń, gmina Zwoleń, powiat zwoleński, województwo mazowieckie, 26-700, Polska',
@@ -52,7 +52,7 @@ it('shows suggestions only after the debounce', async () => {
   render(<SearchBox onPick={() => {}} />)
 
   fireEvent.change(screen.getByRole('combobox'), { target: { value: 'zwole' } })
-  expect(screen.getByText('Szukam…')).toBeDefined()
+  expect(screen.getByText('Searching…')).toBeDefined()
   expect(screen.queryAllByRole('option')).toHaveLength(0)
 
   await act(async () => {
@@ -81,7 +81,7 @@ it('asks for nothing while the phrase is shorter than three characters', async (
   await typeAndSettle('zw')
 
   expect(screen.queryAllByRole('option')).toHaveLength(0)
-  expect(screen.queryByText('Brak wyników')).toBeNull()
+  expect(screen.queryByText('No results')).toBeNull()
 })
 
 it('hands the whole place to onPick when a suggestion is clicked', async () => {
@@ -153,10 +153,10 @@ it('empties the field with the clear button', async () => {
   render(<SearchBox onPick={() => {}} />)
   await typeAndSettle('zwole')
 
-  fireEvent.click(screen.getByLabelText('Wyczyść'))
+  fireEvent.click(screen.getByLabelText('Clear'))
 
   expect(screen.queryByDisplayValue('zwole')).toBeNull()
-  expect(screen.queryByLabelText('Wyczyść')).toBeNull()
+  expect(screen.queryByLabelText('Clear')).toBeNull()
   expect(screen.queryAllByRole('option')).toHaveLength(0)
 })
 
@@ -166,7 +166,16 @@ it('shows the error message from the hook', async () => {
 
   await typeAndSettle('zwole')
 
-  expect(screen.getByText(/Za dużo zapytań/)).toBeDefined()
+  // Tresc komunikatu nalezy do api/client.ts, wiec bierzemy ja stamtad zamiast trzymac tu
+  // druga kopie zdania: test pilnuje, ze uzytkownik widzi dokladnie to, co zglosila warstwa
+  // danych, a nie ze ktos wpisal w panelu wlasny tekst.
+  const message = await fetchPlaces('zwole').then(
+    () => 'fetchPlaces nie zglosil bledu przy 429',
+    (cause: Error) => cause.message,
+  )
+
+  expect(screen.getByText('Error')).toBeDefined()
+  expect(screen.getByText(message)).toBeDefined()
   expect(screen.queryAllByRole('option')).toHaveLength(0)
 })
 
@@ -176,5 +185,5 @@ it('says plainly that a long enough phrase found nothing', async () => {
 
   await typeAndSettle('qqqqq')
 
-  expect(screen.getByText('Brak wyników')).toBeDefined()
+  expect(screen.getByText('No results')).toBeDefined()
 })

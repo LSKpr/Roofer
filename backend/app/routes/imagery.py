@@ -27,7 +27,7 @@ RESPONSES: dict[int | str, dict[str, object]] = {200: {"content": {IMAGE_MEDIA_T
 @router.get("/imagery/orthophoto/{z}/{x}/{y}.png", response_class=Response, responses=RESPONSES)
 async def orthophoto_tile(z: int, x: int, y: int, request: Request) -> Response:
     if not within_grid(z, x, y):
-        raise HTTPException(status_code=400, detail="Wspolrzedne kafla sa poza siatka dla tego zoomu.")
+        raise HTTPException(status_code=400, detail="Tile coordinates are outside the grid for this zoom.")
     try:
         payload = await client_for(request.app).tile(z, x, y)
     except ImageryUnavailable:  # brak ortofoto zostawia na mapie podklad OSM, a nie pustke
@@ -49,7 +49,7 @@ async def roof_image(
     except Exception:  # padnieta baza to 503; w znaczniku <img> tresc bledu i tak nikt nie zobaczy
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     if bbox is None:
-        raise HTTPException(status_code=404, detail="Nie ma budynku o tym identyfikatorze.")
+        raise HTTPException(status_code=404, detail="There is no building with this identifier.")
 
     try:
         payload = await client_for(request.app).roof(bbox, size)

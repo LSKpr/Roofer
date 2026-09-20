@@ -144,20 +144,20 @@ def bbox_area_km2(bbox: BoundingBox) -> float:
 
 
 def format_km2(value: float) -> str:
-    """Liczba kilometrow kwadratowych po polsku: przecinek dziesietny i bez zbednego „,0"."""
-    return f"{value:.1f}".replace(".", ",").removesuffix(",0")
+    """Liczba kilometrow kwadratowych: kropka dziesietna (interfejs jest po angielsku) i bez „.0"."""
+    return f"{value:.1f}".removesuffix(".0")
 
 
 def bbox_problem(bbox: BoundingBox) -> str | None:
-    """Komunikat po polsku, gdy prostokat nie ma sensu; None, gdy jest w porzadku."""
+    """Komunikat dla uzytkownika (po angielsku), gdy prostokat nie ma sensu; None, gdy jest OK."""
     if not (-90.0 <= bbox.south <= 90.0 and -90.0 <= bbox.north <= 90.0):
-        return "Szerokosc geograficzna musi miescic sie w zakresie od -90 do 90 stopni."
+        return "Latitude must be between -90 and 90."
     if not (-180.0 <= bbox.west <= 180.0 and -180.0 <= bbox.east <= 180.0):
-        return "Dlugosc geograficzna musi miescic sie w zakresie od -180 do 180 stopni."
+        return "Longitude must be between -180 and 180."
     if bbox.north <= bbox.south:
-        return "Naroznik NE musi lezec na polnoc od naroznika SW — wspolrzedne sa odwrocone."
+        return "The north corner must lie above the south corner — the coordinates are swapped."
     if bbox.east <= bbox.west:
-        return "Naroznik NE musi lezec na wschod od naroznika SW — wspolrzedne sa odwrocone."
+        return "The east corner must lie to the east of the west corner — the coordinates are swapped."
     return None
 
 
@@ -166,7 +166,8 @@ def area_problem(area_km2: float, limit_km2: float = MAX_AREA_KM2) -> str | None
     if area_km2 <= limit_km2:
         return None
     return (
-        f"Obszar ma {format_km2(area_km2)} km2, a maksimum to {format_km2(limit_km2)} km2 — zaznacz mniejszy fragment."
+        f"The selected area is {format_km2(area_km2)} km², and the maximum is "
+        f"{format_km2(limit_km2)} km² — select a smaller rectangle."
     )
 
 

@@ -10,8 +10,8 @@ export function ZoomHint({ zoom }: { zoom: number }) {
 
   const text =
     zoom < POINT_MIN_ZOOM
-      ? 'Przybliż mapę, aby zobaczyć budynki.'
-      : 'Widzisz zagęszczenie zgłoszeń w rejestrze, nie pojedyncze budynki. Przybliż, aby zobaczyć obrysy dachów.'
+      ? 'Zoom in to see buildings.'
+      : 'This is the density of register reports, not individual buildings. Zoom in to see roof outlines.'
 
   return (
     <p className="rounded-card border border-hairline bg-surface px-3 py-1.5 text-xs text-ink-muted shadow-[0_1px_3px_rgba(5,28,44,0.08)]">

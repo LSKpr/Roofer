@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { RegistryToggle } from './RegistryToggle'
 
-const LABEL = 'Podświetl zgłoszone w rejestrze'
+const LABEL = 'Highlight buildings listed in the register'
 
 it('jest prawdziwym polem wyboru z podpisem, a nie divem udajacym przelacznik', () => {
   render(<RegistryToggle checked onChange={() => {}} />)

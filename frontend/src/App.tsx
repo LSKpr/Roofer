@@ -17,17 +17,17 @@ type BackendState =
   | { kind: 'answered'; health: Health }
   | { kind: 'unreachable'; message: string }
 
-const KM2_FORMAT = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 })
+const KM2_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 
 /**
  * Stan backendu jest informacja diagnostyczna, nie trescia: zostaje kropka z podpowiedzia.
  * Wczesniej zajmowal cala belke nad mapa.
  */
 function statusLabel(state: BackendState): { text: string; dot: string } {
-  if (state.kind === 'checking') return { text: 'Sprawdzam połączenie z backendem…', dot: 'bg-ink-faint' }
-  if (state.kind === 'unreachable') return { text: `Backend niedostepny: ${state.message}`, dot: 'bg-listed' }
-  if (state.health.status === 'ok') return { text: `Backend ok · PostGIS ${state.health.postgis}`, dot: 'bg-accent' }
-  return { text: `Backend bez bazy: ${state.health.detail ?? 'brak szczegolow'}`, dot: 'bg-listed' }
+  if (state.kind === 'checking') return { text: 'Checking the backend connection…', dot: 'bg-ink-faint' }
+  if (state.kind === 'unreachable') return { text: `Backend unavailable: ${state.message}`, dot: 'bg-listed' }
+  if (state.health.status === 'ok') return { text: `Backend OK · PostGIS ${state.health.postgis}`, dot: 'bg-accent' }
+  return { text: `Backend without a database: ${state.health.detail ?? 'no details'}`, dot: 'bg-listed' }
 }
 
 /** Nominatim oddaje bbox jako [south, west, north, east], a mapa chce [west, south, east, north]. */
@@ -68,7 +68,7 @@ export function App() {
     fetchHealth()
       .then((health) => current && setState({ kind: 'answered', health }))
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'nieznany blad'
+        const message = error instanceof Error ? error.message : 'unknown error'
         return current && setState({ kind: 'unreachable', message })
       })
     return () => {
@@ -118,10 +118,10 @@ export function App() {
   }
 
   const scanHint = drawing
-    ? 'Przeciągnij ramkę na mapie'
+    ? 'Drag a rectangle on the map'
     : limitKm2 !== null
-      ? `Zaznacz prostokąt, maks. ${KM2_FORMAT.format(limitKm2)} km²`
-      : 'Zaznacz prostokąt na mapie'
+      ? `Select a rectangle, max ${KM2_FORMAT.format(limitKm2)} km²`
+      : 'Select a rectangle on the map'
 
   return (
     <div className="relative h-full w-full">
@@ -145,7 +145,7 @@ export function App() {
             <div className="flex items-start justify-between gap-3 px-4 pt-3 pb-2.5">
               <div>
                 <p className="font-display text-base leading-none text-ink">Roofer</p>
-                <p className="label-micro mt-1.5">Rejestr azbestu · województwo mazowieckie</p>
+                <p className="label-micro mt-1.5">Asbestos register · Masovian Voivodeship</p>
               </div>
               <span
                 title={status.text}
@@ -159,7 +159,7 @@ export function App() {
 
             <div className="flex items-center justify-between gap-3 border-t border-hairline px-4 py-2.5">
               <div className="min-w-0">
-                <p className="label-micro">Skan obszaru</p>
+                <p className="label-micro">Area scan</p>
                 <p className="mt-0.5 truncate text-xs text-ink-muted">{scanHint}</p>
               </div>
               <button
@@ -171,7 +171,7 @@ export function App() {
                     : 'shrink-0 rounded-card border border-ink bg-ink px-3 py-1.5 text-xs leading-none text-surface hover:opacity-90'
                 }
               >
-                {drawing ? 'Anuluj' : 'Zaznacz'}
+                {drawing ? 'Cancel' : 'Select'}
               </button>
             </div>
           </div>

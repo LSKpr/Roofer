@@ -9,7 +9,7 @@ function anAnalysis(overrides: Partial<RoofAnalysis> = {}): RoofAnalysis {
     verdict: 'suspected',
     probability: 0.72,
     modelName: 'eternit-v1',
-    note: 'Ocena z jednego zdjęcia lotniczego. Nie zastępuje oględzin ani badania próbki.',
+    note: 'An assessment from a single aerial photo. It does not replace an inspection or a sample test.',
     ...overrides,
   }
 }
@@ -73,7 +73,7 @@ it('zamienia blad z backendu na komunikat, nie na wyjatek', async () => {
   const { result } = renderHook(() => useRoofAnalysis(42))
   await backend.fail(0, 404)
 
-  expect(result.current.error).toMatch(/Nie ma budynku/)
+  expect(result.current.error).toMatch(/no building with this identifier/)
   expect(result.current.analysis).toBeNull()
   expect(result.current.loading).toBe(false)
 })

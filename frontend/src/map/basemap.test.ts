@@ -66,6 +66,12 @@ it('keeps the id and label of every basemap in sync with its key', () => {
   }
 })
 
+// Etykiety przelacznika zyja tylko tutaj (BasemapSwitcher czyta je z BASEMAPS), wiec to jedyne
+// miejsce, w ktorym literowka albo powrot do polskiej nazwy zostanie zauwazona.
+it('labels the switchable basemaps in the interface language', () => {
+  expect(BASEMAP_IDS.map((id) => BASEMAPS[id].label)).toEqual(['Map', 'Aerial', 'Minimal'])
+})
+
 it('serves the orthophoto through our own proxy', () => {
   const source = BASEMAPS.orthophoto.style.sources.orthophoto
   expect(source.type).toBe('raster')
@@ -103,10 +109,10 @@ it('gives every basemap and every raster source a non-empty attribution', () => 
 
 it('spells out the attribution that CARTO and GUGiK require', () => {
   expect(BASEMAPS.minimal.attribution).toBe('© OpenStreetMap contributors © CARTO')
-  expect(BASEMAPS.orthophoto.attribution).toBe('Ortofotomapa: GUGiK / Geoportal.gov.pl')
+  expect(BASEMAPS.orthophoto.attribution).toBe('Aerial imagery: GUGiK / Geoportal.gov.pl')
 
   const carto = BASEMAPS.minimal.style.sources.carto
   expect(carto.type === 'raster' && carto.attribution).toBe('© OpenStreetMap contributors © CARTO')
   const orthophoto = BASEMAPS.orthophoto.style.sources.orthophoto
-  expect(orthophoto.type === 'raster' && orthophoto.attribution).toBe('Ortofotomapa: GUGiK / Geoportal.gov.pl')
+  expect(orthophoto.type === 'raster' && orthophoto.attribution).toBe('Aerial imagery: GUGiK / Geoportal.gov.pl')
 })

@@ -120,5 +120,5 @@ async def scan(body: ScanRequest, request: Request) -> ScanResponse:
     try:
         result = await scan_area(request.app.state.pool, bbox, settings.database_timeout_s, MAX_LISTED_BUILDINGS)
     except Exception as error:  # padnieta baza to 503, nie 500 z tracebackiem
-        raise HTTPException(status_code=503, detail="Baza nie odpowiada.") from error
+        raise HTTPException(status_code=503, detail="The database is not responding.") from error
     return to_response(result)

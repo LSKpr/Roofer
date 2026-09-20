@@ -13,23 +13,23 @@ function asStyleValue(color: string): string {
 it('opisuje oba statusy, ktore mapa potrafi pokazac', () => {
   render(<Legend />)
 
-  expect(screen.getByText('Zgłoszony w rejestrze GeoAzbest')).toBeDefined()
-  expect(screen.getByText('Niezgłoszony')).toBeDefined()
+  expect(screen.getByText('Listed in the GeoAzbest register')).toBeDefined()
+  expect(screen.getByText('Not listed')).toBeDefined()
   expect(screen.getAllByTestId('legend-swatch')).toHaveLength(2)
 })
 
 it('mowi wprost, ze brak w rejestrze nie jest dowodem czystego dachu', () => {
   render(<Legend />)
 
-  expect(screen.getByText(/nie jest dowodem, że dach jest czysty/)).toBeDefined()
-  expect(screen.getByText(/nikt go nie zgłosił/)).toBeDefined()
+  expect(screen.getByText(/not proof that the roof is clean/)).toBeDefined()
+  expect(screen.getByText(/it only means nobody reported it/)).toBeDefined()
 })
 
 it('mowi, ze cieplo to zageszczenie zgloszen, a nie ilosc azbestu ani ryzyko', () => {
   render(<Legend />)
 
-  expect(screen.getByText(/zagęszczenie budynków zgłoszonych w rejestrze GeoAzbest/)).toBeDefined()
-  expect(screen.getByText(/nie ilość azbestu i nie poziom ryzyka/)).toBeDefined()
+  expect(screen.getByText(/density of buildings listed in the GeoAzbest register/)).toBeDefined()
+  expect(screen.getByText(/not the amount of asbestos and not a level of risk/)).toBeDefined()
 })
 
 // Najwazniejsze zdanie legendy: mapa gestosci zgloszen wyglada jak mapa problemu, a gmina,
@@ -37,24 +37,25 @@ it('mowi, ze cieplo to zageszczenie zgloszen, a nie ilosc azbestu ani ryzyko', (
 it('tlumaczy, ze pusty obszar znaczy „nikt nic nie zglosil", a nie „nic tam nie ma"', () => {
   render(<Legend />)
 
-  expect(screen.getByText(/wyłącznie zgłoszone budynki/)).toBeDefined()
-  expect(screen.getByText(/nikt nic tu nie zgłosił/)).toBeDefined()
-  expect(screen.getByText(/nie „nic tam nie ma"/)).toBeDefined()
+  expect(screen.getByText(/the map shows only listed buildings/)).toBeDefined()
+  expect(screen.getByText(/means "nobody reported anything here"/)).toBeDefined()
+  expect(screen.getByText(/not "there is nothing there"/)).toBeDefined()
+  expect(screen.getByText(/a municipality that runs no inventory stays blank on this map/)).toBeDefined()
 })
 
 it('uprzedza, od ktorego zoomu sa obrysy i klikalne budynki', () => {
   render(<Legend />)
 
-  expect(screen.getByText(new RegExp(`Obrysy budynków pojawiają się od zoomu ${POLYGON_MIN_ZOOM}`))).toBeDefined()
+  expect(screen.getByText(new RegExp(`Building outlines appear from zoom ${POLYGON_MIN_ZOOM}`))).toBeDefined()
   expect(POLYGON_MIN_ZOOM).toBe(14)
-  expect(screen.getByText(/komórka siatki nie jest budynkiem/)).toBeDefined()
+  expect(screen.getByText(/a grid cell is not a building/)).toBeDefined()
 })
 
 it('nie uzywa slownictwa sugerujacego pomiar azbestu', () => {
   const { container } = render(<Legend />)
 
   const text = container.textContent ?? ''
-  expect(text).not.toMatch(/wykryto|brak azbestu|bezpieczny/i)
+  expect(text).not.toMatch(/detected asbestos|asbestos-free|no asbestos|safe/i)
 })
 
 // Najwazniejsze zdanie przy wylaczonym przelaczniku: szara mapa wyglada dokladnie tak,
@@ -62,17 +63,17 @@ it('nie uzywa slownictwa sugerujacego pomiar azbestu', () => {
 it('mowi wprost, ze podswietlenie rejestru jest wylaczone', () => {
   render(<Legend showRegistry={false} />)
 
-  expect(screen.getByText(/Podświetlenie rejestru jest wyłączone/)).toBeDefined()
-  expect(screen.getByText(/brak czerwieni nie znaczy, że nikt nic nie zgłosił/)).toBeDefined()
+  expect(screen.getByText(/Register highlighting is off/)).toBeDefined()
+  expect(screen.getByText(/no red does not mean nobody reported anything/)).toBeDefined()
   // Cieplo znika razem z czerwienia, wiec legenda mowi takze o nim.
-  expect(screen.getByText(/Ukryte jest też zagęszczenie zgłoszeń po oddaleniu/)).toBeDefined()
+  expect(screen.getByText(/The report density shown when zoomed out is hidden too/)).toBeDefined()
 })
 
 it('nie straszy tym zdaniem, kiedy podswietlenie dziala', () => {
   render(<Legend />)
 
   expect(screen.queryByTestId('legend-registry-off')).toBeNull()
-  expect(screen.queryByText(/Podświetlenie rejestru jest wyłączone/)).toBeNull()
+  expect(screen.queryByText(/Register highlighting is off/)).toBeNull()
 })
 
 // Przelacznik nie moze zabrac legendzie ani jednego ostrzezenia: wylaczone podswietlenie dokłada
@@ -80,10 +81,10 @@ it('nie straszy tym zdaniem, kiedy podswietlenie dziala', () => {
 it('trzyma wszystkie dotychczasowe zdania takze przy wylaczonym podswietleniu', () => {
   const { container } = render(<Legend showRegistry={false} />)
 
-  expect(screen.getByText(/nie jest dowodem, że dach jest czysty/)).toBeDefined()
-  expect(screen.getByText(/nikt nic tu nie zgłosił/)).toBeDefined()
-  expect(screen.getByText(/zagęszczenie budynków zgłoszonych w rejestrze GeoAzbest/)).toBeDefined()
-  expect(container.textContent ?? '').not.toMatch(/wykryto|brak azbestu|bezpieczny/i)
+  expect(screen.getByText(/not proof that the roof is clean/)).toBeDefined()
+  expect(screen.getByText(/means "nobody reported anything here"/)).toBeDefined()
+  expect(screen.getByText(/density of buildings listed in the GeoAzbest register/)).toBeDefined()
+  expect(container.textContent ?? '').not.toMatch(/detected asbestos|asbestos-free|no asbestos|safe/i)
 })
 
 /** Te same wartosci co tokeny --color-listed i --color-not-listed w index.css. */
@@ -116,6 +117,6 @@ it('odwzorowuje rampe heatmapy tymi samymi kolorami co warstwa mapy', () => {
 it('podpisuje oba konce paska, zeby nie trzeba bylo zgadywac kierunku', () => {
   render(<Legend />)
 
-  expect(screen.getByText('Pojedyncze zgłoszenia')).toBeDefined()
-  expect(screen.getByText('Skupisko')).toBeDefined()
+  expect(screen.getByText('Single reports')).toBeDefined()
+  expect(screen.getByText('Cluster')).toBeDefined()
 })

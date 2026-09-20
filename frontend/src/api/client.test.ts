@@ -38,7 +38,7 @@ it('treats 503 as data, because a degraded backend still answers', async () => {
 it('rejects on any other status code', async () => {
   stubFetch(500, {})
 
-  await expect(fetchHealth('http://api.test')).rejects.toThrow('kodem 500')
+  await expect(fetchHealth('http://api.test')).rejects.toThrow('status 500')
 })
 
 it('keeps the z/x/y placeholders that MapLibre fills in itself', () => {
@@ -64,7 +64,7 @@ it('reads a single building', async () => {
 })
 
 it('explains a missing building instead of showing a bare 404', async () => {
-  stubFetch(404, { detail: 'Nie ma budynku o tym identyfikatorze.' })
+  stubFetch(404, { detail: 'There is no building with this identifier.' })
 
-  await expect(fetchBuilding(7, 'http://api.test')).rejects.toThrow('Nie ma budynku')
+  await expect(fetchBuilding(7, 'http://api.test')).rejects.toThrow('no building with this identifier')
 })

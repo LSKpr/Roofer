@@ -81,9 +81,9 @@ it('zamienia blad z backendu na komunikat, nie na wyjatek', async () => {
   const { result } = renderHook(() => useAreaScan())
 
   act(() => result.current.run(BOUNDS))
-  await backend.reject(0, 400, 'Obszar ma 41 km2, a maksimum to 25 km2 — zaznacz mniejszy fragment.')
+  await backend.reject(0, 400, 'The area is 41 km2, and the maximum is 25 km2 — select a smaller fragment.')
 
-  expect(result.current.error).toBe('Obszar ma 41 km2, a maksimum to 25 km2 — zaznacz mniejszy fragment.')
+  expect(result.current.error).toBe('The area is 41 km2, and the maximum is 25 km2 — select a smaller fragment.')
   expect(result.current.scan).toBeNull()
   expect(result.current.loading).toBe(false)
 })
@@ -122,8 +122,8 @@ it('clear czysci wynik i blad', async () => {
   expect(result.current.error).toBeNull()
 
   act(() => result.current.run(BOUNDS))
-  await backend.reject(1, 503, 'Baza nie odpowiada.')
-  expect(result.current.error).toBe('Baza nie odpowiada.')
+  await backend.reject(1, 503, 'The database is not responding.')
+  expect(result.current.error).toBe('The database is not responding.')
 
   act(() => result.current.clear())
   expect(result.current.error).toBeNull()
