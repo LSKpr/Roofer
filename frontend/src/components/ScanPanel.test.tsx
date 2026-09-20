@@ -1,6 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import type { AreaAnalysis, AreaAnalysisStats, AreaModelLimits, AreaScan, AreaStats, ListedBuilding } from '../api/client'
+import type {
+  AreaAnalysis,
+  AreaAnalysisStats,
+  AreaModelLimits,
+  AreaScan,
+  AreaStats,
+  ListedBuilding,
+  SuspectedRoof,
+} from '../api/client'
 import { ScanPanel } from './ScanPanel'
 
 /** Liczby z prawdziwego skanu bboxa 2×2 km pod Zwoleniem. */
@@ -71,11 +79,36 @@ const MODEL_STATS: AreaAnalysisStats = {
   modelName: '70b702',
 }
 
+type RoofSpec = { count: number; probability: number; listed?: boolean; areaM2?: number; firstId: number }
+
+function someRoofs({ count, probability, listed = false, areaM2 = 100, firstId }: RoofSpec): SuspectedRoof[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: firstId + index,
+    probability,
+    listed,
+    areaM2,
+    geometry: null,
+  }))
+}
+
+/**
+ * Oceny pojedynczych dachow z tego samego przebiegu. Panel liczy z nich wszystko, co zalezy od
+ * progu, wiec przy progu 0,5 musza dawac dokladnie `MODEL_STATS`: 16 z flaga (2 zgloszone,
+ * 14 nie), 2 431,5 m² powierzchni z flaga i jeden zgloszony dach ponizej progu.
+ */
+const MODEL_ROOFS: SuspectedRoof[] = [
+  ...someRoofs({ count: 2, probability: 0.81, listed: true, areaM2: 150, firstId: 100 }),
+  ...someRoofs({ count: 13, probability: 0.72, areaM2: 150, firstId: 200 }),
+  ...someRoofs({ count: 1, probability: 0.66, areaM2: 181.5, firstId: 300 }),
+  ...someRoofs({ count: 1, probability: 0.31, listed: true, areaM2: 120, firstId: 400 }),
+  ...someRoofs({ count: 47, probability: 0.18, areaM2: 100, firstId: 500 }),
+]
+
 type AnalysisOverrides = Omit<Partial<AreaAnalysis>, 'stats'> & { stats?: Partial<AreaAnalysisStats> }
 
 function anAnalysis(overrides: AnalysisOverrides = {}): AreaAnalysis {
   const { stats, ...rest } = overrides
-  return { stats: { ...MODEL_STATS, ...stats }, buildings: [], truncated: false, ...rest }
+  return { stats: { ...MODEL_STATS, ...stats }, buildings: MODEL_ROOFS, truncated: false, ...rest }
 }
 
 type PanelOptions = {
@@ -88,6 +121,8 @@ type PanelOptions = {
   analysisError?: string | null
   onAnalyse?: () => void
   modelLimits?: AreaModelLimits | null
+  threshold?: number | null
+  onThresholdChange?: (value: number) => void
 }
 
 function renderPanel(scan: AreaScan | null, options: PanelOptions = {}) {
@@ -103,6 +138,8 @@ function renderPanel(scan: AreaScan | null, options: PanelOptions = {}) {
       analysisError={options.analysisError ?? null}
       onAnalyse={options.onAnalyse ?? (() => {})}
       modelLimits={'modelLimits' in options ? (options.modelLimits ?? null) : MODEL_LIMITS}
+      threshold={options.threshold ?? null}
+      onThresholdChange={options.onThresholdChange ?? (() => {})}
     />,
   )
 }
@@ -110,6 +147,16 @@ function renderPanel(scan: AreaScan | null, options: PanelOptions = {}) {
 /** Przycisk analizy jest jedynym przyciskiem z ta etykieta, wiec szukamy go po niej. */
 function analyseButton(): HTMLButtonElement {
   return screen.getByText('Analyse roofs with the model') as HTMLButtonElement
+}
+
+/** Suwak progu szukamy tak, jak znalazlby go czytnik ekranu: po etykiecie. */
+function thresholdSlider(): HTMLInputElement {
+  return screen.getByLabelText('Suspicion threshold') as HTMLInputElement
+}
+
+/** Wartosc wiersza po jego etykiecie: te same male liczby powtarzaja sie w panelu kilka razy. */
+function rowValue(label: string): string {
+  return screen.getByText(label).nextElementSibling?.textContent ?? ''
 }
 
 it('prowadzi udzialem zgloszonych w procentach i surowymi liczbami pod nim', () => {
@@ -447,7 +494,15 @@ it('nie pozwala odczytac braku flagi u zgloszonego dachu jako zniknięcia azbest
 })
 
 it('odmienia zdanie o zgloszonych dachach bez flagi', () => {
-  renderPanel(aSmallScan(), { analysis: anAnalysis({ stats: { listedNotSuspected: 3 } }) })
+  // Liczba bierze sie z ocen, nie ze statystyk backendu, wiec trzy zgloszone dachy ponizej progu.
+  const threeListedBelow = anAnalysis({
+    buildings: [
+      ...someRoofs({ count: 3, probability: 0.2, listed: true, areaM2: 130, firstId: 700 }),
+      ...someRoofs({ count: 1, probability: 0.9, areaM2: 140, firstId: 800 }),
+    ],
+  })
+
+  renderPanel(aSmallScan(), { analysis: threeListedBelow })
 
   expect(screen.getByText(/3 listed roofs were not flagged by the model/)).toBeDefined()
 })
@@ -476,4 +531,117 @@ it('nie proponuje analizy w obszarze bez budynkow', () => {
   )
 
   expect(screen.queryByText('Analyse roofs with the model')).toBeNull()
+})
+
+// Suwak opisuje wynik, wiec bez wyniku nie ma czego nim ustawiac.
+it('daje suwak progu dopiero razem z wynikiem modelu', () => {
+  renderPanel(aSmallScan())
+  expect(screen.queryByLabelText('Suspicion threshold')).toBeNull()
+
+  renderPanel(aSmallScan(), { analysisLoading: true })
+  expect(screen.queryByLabelText('Suspicion threshold')).toBeNull()
+
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+  expect(thresholdSlider()).toBeDefined()
+})
+
+it('stawia suwak na progu z odpowiedzi, dopoki nikt go nie ruszyl', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: null })
+
+  expect(thresholdSlider().value).toBe('0.5')
+  expect(screen.getByTestId('threshold-value').textContent).toBe('50%')
+  expect(screen.queryByText(/Model default/)).toBeNull()
+})
+
+it('oddaje nowy prog rodzicowi, bo stan progu trzyma App', () => {
+  const onThresholdChange = vi.fn()
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), onThresholdChange })
+
+  fireEvent.change(thresholdSlider(), { target: { value: '0.7' } })
+
+  expect(onThresholdChange).toHaveBeenCalledWith(0.7)
+})
+
+// Liczby przy podniesionym progu sa policzone z ocen pojedynczych dachow, a nie wziete
+// z backendu: model nie jest pytany drugi raz, bo przyjmuje 10 zapytan na minute.
+it('przelicza liczby, gdy prog idzie w gore', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.7 })
+
+  // Powyzej 0,7 zostaja dwa zgloszone dachy (0,81) i trzynascie niezgloszonych (0,72).
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('13')
+  expect(screen.getByText('15 (23%)')).toBeDefined()
+  expect(screen.getByText('2,250 m²')).toBeDefined()
+  expect(screen.getByTestId('threshold-value').textContent).toBe('70%')
+})
+
+it('przelicza liczby takze wtedy, gdy prog idzie w dol', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.3 })
+
+  // Prog 0,3 doklada zgloszony dach z ocena 0,31, wiec zgloszonych bez flagi nie zostaje ani jeden.
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
+  expect(screen.getByText('17 (27%)')).toBeDefined()
+  expect(screen.getByText('2,552 m²')).toBeDefined()
+  expect(rowValue('Flagged and already listed')).toBe('3')
+  expect(rowValue('Listed but not flagged')).toBe('0')
+  expect(screen.queryByText(/listed roof was not flagged/)).toBeNull()
+})
+
+// Liczba ocenionych i brak oceny nie zaleza od progu: prog przesuwa granice flagi, a nie to,
+// ile zdjec model obejrzal.
+it('nie rusza liczby ocenionych ani braku ocen, gdy prog sie zmienia', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.95 })
+
+  expect(screen.getByText('Roofs analysed')).toBeDefined()
+  expect(screen.getByText('64')).toBeDefined()
+  expect(screen.getByText(/10 roofs got no score/)).toBeDefined()
+  expect(screen.getByText('70b702')).toBeDefined()
+})
+
+// Uzytkownik musi wiedziec, ze patrzy na wlasne ustawienie, a nie na wynik modelu.
+it('podaje prog modelu, gdy suwak stoi gdzie indziej', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0.35 })
+
+  expect(screen.getByText('Model default: 50%')).toBeDefined()
+})
+
+// Prog jest decyzja patrzacego: przesuniecie suwaka zmienia kompromis, nie jakosc modelu.
+it('mowi, ze prog jest decyzja uzytkownika, a skutecznosc zmierzono przy domyslnym', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  expect(
+    screen.getByText(
+      'The threshold is your decision, not a property of the model: both figures above were measured at the model default, and moving the slider trades false alarms against missed roofs rather than changing how well the model sees.',
+    ),
+  ).toBeDefined()
+})
+
+// Najgrozniejszy mozliwy odczyt suwaka: „powyzej jest azbest, ponizej go nie ma".
+it('mowi, ze ocena ponizej progu nie jest werdyktem o dachu', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis() })
+
+  expect(screen.getByText(/A roof below the threshold is not cleared/)).toBeDefined()
+  expect(screen.getByText(/the model sees less resemblance to corrugated grey sheeting/)).toBeDefined()
+  expect(screen.getByText(/never that the roof is without asbestos/)).toBeDefined()
+})
+
+// Ten sam straznik slownictwa, co wyzej, ale na stanie z przesunietym suwakiem: to on najlatwiej
+// zsunalby sie z „model cos widzi na zdjeciu" na „wykryto azbest".
+it('nie uzywa slownictwa sugerujacego pomiar azbestu przy przesunietym suwaku', () => {
+  const low = renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 0 })
+  expect(low.container.textContent ?? '').not.toMatch(/detected asbestos|asbestos-free|no asbestos|safe|clean roof/i)
+
+  const high = renderPanel(aSmallScan(), { analysis: anAnalysis(), threshold: 1 })
+  expect(high.container.textContent ?? '').not.toMatch(/detected asbestos|asbestos-free|no asbestos|safe|clean roof/i)
+})
+
+// Przy przycietej liscie nie ma z czego przeliczyc calosci, wiec suwak znika, a liczby zostaja
+// te z backendu — patrz komentarz w lib/modelStats.ts.
+it('przy przycietej liscie nie daje suwaka i mowi, dlaczego', () => {
+  renderPanel(aSmallScan(), { analysis: anAnalysis({ truncated: true }), threshold: 0.9 })
+
+  expect(screen.queryByLabelText('Suspicion threshold')).toBeNull()
+  expect(screen.getByText(/The threshold cannot be moved here/)).toBeDefined()
+  // Liczby zostaja policzone przez backend przy jego progu, a nie przy 0,9.
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('14')
+  expect(screen.getByText('16 (25%)')).toBeDefined()
 })

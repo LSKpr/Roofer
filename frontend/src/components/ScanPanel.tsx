@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import type { AreaAnalysis, AreaModelLimits, AreaScan, ListedBuilding } from '../api/client'
+import { recountStats } from '../lib/modelStats'
+import { ThresholdSlider } from './ThresholdSlider'
 
 type ScanPanelProps = {
   scan: AreaScan | null
@@ -14,6 +16,12 @@ type ScanPanelProps = {
   onAnalyse: () => void
   /** Limity modelu z backendu; `null`, gdy backend ich nie poda — wtedy nie blokujemy przycisku. */
   modelLimits: AreaModelLimits | null
+  /**
+   * Prog podejrzenia wybrany suwakiem; `null` znaczy „nikt go nie ruszal" i wtedy obowiazuje prog
+   * z odpowiedzi modelu. Stan trzyma `App`, bo ten sam prog filtruje obrysy na mapie.
+   */
+  threshold: number | null
+  onThresholdChange: (value: number) => void
 }
 
 const NUMBER_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -139,11 +147,50 @@ function listedNotFlaggedNote(count: number): string {
  */
 const SUSPECTED_DOT = 'bg-suspected'
 
+/**
+ * Prog jest decyzja patrzacego, nie wlasnoscia modelu: skutecznosc podana przez autora zmierzono
+ * przy progu domyslnym, a suwak przesuwa kompromis, nie jakosc oceny.
+ */
+const THRESHOLD_NOTE =
+  'The threshold is your decision, not a property of the model: both figures above were measured at the model default, and moving the slider trades false alarms against missed roofs rather than changing how well the model sees.'
+
+/**
+ * Ocena ponizej progu nie jest werdyktem o dachu. Bez tego zdania suwak czytaloby sie jako
+ * „powyzej jest azbest, ponizej go nie ma", a model porownuje tylko wyglad pokrycia na zdjeciu.
+ */
+const BELOW_THRESHOLD_NOTE =
+  'A roof below the threshold is not cleared: a lower score only means the model sees less resemblance to corrugated grey sheeting, never that the roof is without asbestos.'
+
+/** Bez pelnej listy ocen nie ma z czego przeliczyc calosci — patrz komentarz w lib/modelStats.ts. */
+const TRUNCATED_THRESHOLD_NOTE =
+  'The threshold cannot be moved here: the list of roofs is truncated, so a recount would describe only the roofs that arrived, not the whole area.'
+
 /** Liczby modelu w kolejnosci czytania: najpierw niezgloszone z flaga, potem cala reszta. */
-function ModelNumbers({ analysis }: { analysis: AreaAnalysis }) {
-  const { stats } = analysis
+function ModelNumbers({
+  analysis,
+  threshold,
+  onThresholdChange,
+}: {
+  analysis: AreaAnalysis
+  threshold: number | null
+  onThresholdChange: (value: number) => void
+}) {
+  // Wszystko, co zalezy od progu, liczy sie tutaj z ocen pojedynczych budynkow — model nie jest
+  // pytany po raz drugi, bo tamta instancja przyjmuje 10 zapytan na minute i jedno naraz.
+  const stats = recountStats(analysis, threshold ?? analysis.stats.threshold)
   return (
     <div>
+      {/* Suwak nad liczbami: najpierw widac, od ktorej oceny liczymy flage, potem ile jej wyszlo.
+          Przy przycietej liscie go nie ma, bo nie przeliczamy — zdanie nizej mowi dlaczego. */}
+      {analysis.truncated ? null : (
+        <ThresholdSlider
+          value={stats.threshold}
+          onChange={onThresholdChange}
+          modelDefault={analysis.stats.threshold}
+          className="mb-3.5 border-b border-hairline pb-3.5"
+        />
+      )}
+
       {/* Liczba prowadzaca calej aplikacji: dachy, ktorych nikt nie zglosil, a model cos na nich widzi. */}
       <p className="flex items-center gap-2">
         <span data-testid="suspected-dot" className={`inline-block h-2.5 w-2.5 shrink-0 ${SUSPECTED_DOT}`} />
@@ -170,10 +217,15 @@ function ModelNumbers({ analysis }: { analysis: AreaAnalysis }) {
       <div className="mt-3 space-y-1 text-xs text-ink-faint">
         <p>Orange marks what the model sees on a photo, not a fact from the register.</p>
         <p>The model reports 77% accuracy and 63% asbestos recall, so treat a flag as a hint for an inspection.</p>
+        <p>{THRESHOLD_NOTE}</p>
+        <p>{BELOW_THRESHOLD_NOTE}</p>
         {stats.noResult > 0 ? <p>{noResultNote(stats.noResult)}</p> : null}
         {stats.listedNotSuspected > 0 ? <p>{listedNotFlaggedNote(stats.listedNotSuspected)}</p> : null}
         {analysis.truncated ? (
-          <p>The list of roofs is truncated, so the map shows fewer of them than the numbers above count.</p>
+          <>
+            <p>The list of roofs is truncated, so the map shows fewer of them than the numbers above count.</p>
+            <p>{TRUNCATED_THRESHOLD_NOTE}</p>
+          </>
         ) : null}
       </div>
     </div>
@@ -193,6 +245,8 @@ function ModelSection({
   error,
   onAnalyse,
   modelLimits,
+  threshold,
+  onThresholdChange,
 }: {
   scan: AreaScan
   analysis: AreaAnalysis | null
@@ -200,6 +254,8 @@ function ModelSection({
   error: string | null
   onAnalyse: () => void
   modelLimits: AreaModelLimits | null
+  threshold: number | null
+  onThresholdChange: (value: number) => void
 }) {
   const reason = limitReason(scan, modelLimits)
 
@@ -209,7 +265,7 @@ function ModelSection({
         // Zadanie trwa kilka sekund; bez tego zdania panel wyglada na zepsuty.
         <p className="text-ink-muted">Analysing {roofsLabel(scan.stats.total)}…</p>
       ) : analysis ? (
-        <ModelNumbers analysis={analysis} />
+        <ModelNumbers analysis={analysis} threshold={threshold} onThresholdChange={onThresholdChange} />
       ) : (
         <div>
           <button
@@ -269,6 +325,8 @@ export function ScanPanel({
   analysisError,
   onAnalyse,
   modelLimits,
+  threshold,
+  onThresholdChange,
 }: ScanPanelProps) {
   if (loading) {
     return (
@@ -369,6 +427,8 @@ export function ScanPanel({
         error={analysisError}
         onAnalyse={onAnalyse}
         modelLimits={modelLimits}
+        threshold={threshold}
+        onThresholdChange={onThresholdChange}
       />
     </Shell>
   )

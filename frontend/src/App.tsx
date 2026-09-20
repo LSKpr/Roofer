@@ -20,6 +20,7 @@ import { ZoomHint } from './components/ZoomHint'
 import { useAreaAnalysis } from './hooks/useAreaAnalysis'
 import { useAreaScan } from './hooks/useAreaScan'
 import { useBuilding } from './hooks/useBuilding'
+import { effectiveThreshold } from './lib/modelStats'
 import { MapView, type MapFocus } from './map/MapView'
 import { DEFAULT_BASEMAP, INITIAL_ZOOM, type BasemapId } from './map/basemap'
 
@@ -42,20 +43,23 @@ function statusLabel(state: BackendState): { text: string; dot: string } {
 }
 
 /**
- * Mapa dostaje tylko te dachy, ktorych ocena siega progu modelu.
+ * Mapa dostaje tylko te dachy, ktorych ocena siega obowiazujacego progu.
  *
- * Prog jest wartoscia z odpowiedzi, nie stala w kodzie, a filtruje rodzic, bo to decyzja
- * interfejsu: liczby w panelu i obrysy na mapie musza pochodzic z tego samego progu, inaczej
- * „14 niezgloszonych z flaga" nie zgadzaloby sie z tym, co widac pomaranczowego.
+ * Prog nie jest stala w kodzie: domyslnie przychodzi w odpowiedzi modelu, a suwak w panelu moze
+ * go przesunac. Filtruje rodzic, bo to decyzja interfejsu: liczby w panelu i obrysy na mapie
+ * musza pochodzic z tego samego progu, inaczej „14 niezgloszonych z flaga" nie zgadzaloby sie
+ * z tym, co widac pomaranczowego. Prog liczy `effectiveThreshold`, czyli ten sam modul, ktory
+ * przelicza liczby w panelu — przy przycietej liscie oddaje prog backendu.
  */
 /** Budynek, ktory da sie narysowac: ocena powyzej progu i obrys od modelu. */
 type DrawableRoof = SuspectedRoof & { geometry: RoofGeometry }
 
-function aboveThreshold(analysis: AreaAnalysis | null): DrawableRoof[] | null {
+function aboveThreshold(analysis: AreaAnalysis | null, chosen: number | null): DrawableRoof[] | null {
   if (analysis === null) return null
+  const threshold = effectiveThreshold(analysis, chosen)
   // Bez obrysu nie ma czego narysowac; w statystykach taki budynek i tak jest policzony.
   return analysis.buildings.filter(
-    (roof): roof is DrawableRoof => roof.probability >= analysis.stats.threshold && roof.geometry !== null,
+    (roof): roof is DrawableRoof => roof.probability >= threshold && roof.geometry !== null,
   )
 }
 
@@ -98,7 +102,15 @@ export function App() {
    * a liczy kilka sekund, wiec uruchamia ja klikniecie, a nie samo narysowanie prostokata.
    */
   const analysis = useAreaAnalysis()
-  const suspectedRoofs = useMemo(() => aboveThreshold(analysis.analysis), [analysis.analysis])
+  /**
+   * Prog podejrzenia wybrany suwakiem. `null` znaczy „nikt go nie ruszal" i wtedy obowiazuje prog
+   * z odpowiedzi modelu — dzieki temu nie trzymamy drugiej kopii tamtej liczby, a nowy wynik
+   * zawsze startuje od progu, przy ktorym backend policzyl swoje statystyki. Stan siedzi tutaj,
+   * bo ta sama wartosc liczy tabelke w `ScanPanel` i filtruje obrysy w `MapView`; dwie kopie
+   * rozjechalyby sie i panel mowilby o innych dachach, niz widac na mapie.
+   */
+  const [threshold, setThreshold] = useState<number | null>(null)
+  const suspectedRoofs = useMemo(() => aboveThreshold(analysis.analysis, threshold), [analysis.analysis, threshold])
 
   useEffect(() => {
     let current = true
@@ -141,6 +153,8 @@ export function App() {
     scan.clear()
     analysis.clear()
     setScannedArea(null)
+    // Prog nalezy do wyniku, nie do sesji: przy nastepnej ocenie obowiazuje znowu prog modelu.
+    setThreshold(null)
   }
 
   function startDrawing() {
@@ -161,7 +175,11 @@ export function App() {
 
   /** Model dostaje dokladnie ten prostokat, ktorego dotycza liczby na ekranie. */
   function analyseArea() {
-    if (scannedArea !== null) analysis.run(scannedArea)
+    if (scannedArea === null) return
+    // Nowa ocena przychodzi ze swoim progiem i to on obowiazuje; prog przesuniety przy
+    // poprzednim wyniku opisywalby tamte dachy.
+    setThreshold(null)
+    analysis.run(scannedArea)
   }
 
   function handlePickBuilding(id: number) {
@@ -262,6 +280,8 @@ export function App() {
                   analysisError={analysis.error}
                   onAnalyse={analyseArea}
                   modelLimits={modelLimits}
+                  threshold={threshold}
+                  onThresholdChange={setThreshold}
                 />
               )}
             </div>

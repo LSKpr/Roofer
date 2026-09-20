@@ -107,17 +107,22 @@ const SCAN = {
   areaKm2: 0.6,
 }
 
-/** Trzeci dach ma ocene ponizej progu — mapa nie ma prawa go dostac. */
+/**
+ * Trzeci dach ma ocene ponizej progu — mapa nie ma prawa go dostac.
+ *
+ * Statystyki sa zgodne z tymi trzema ocenami, bo panel przelicza je u siebie: przy progu 0,5
+ * z flaga sa 42 i 77, z czego niezgloszony jest tylko 42.
+ */
 const ANALYSIS = {
   stats: {
-    analysed: 64,
-    noResult: 10,
-    suspected: 16,
-    suspectedShare: 0.25,
-    suspectedNotListed: 14,
-    suspectedListed: 2,
-    listedNotSuspected: 1,
-    suspectedRoofAreaM2: 2431.5,
+    analysed: 3,
+    noResult: 1,
+    suspected: 2,
+    suspectedShare: 0.6667,
+    suspectedNotListed: 1,
+    suspectedListed: 1,
+    listedNotSuspected: 0,
+    suspectedRoofAreaM2: 373,
     threshold: 0.5,
     modelName: '70b702',
   },
@@ -399,10 +404,72 @@ it('shows the model result and hands the map only the roofs above the threshold'
   render(<App />)
   const leading = await scanAndAnalyse()
 
-  expect(leading.textContent).toBe('14')
+  expect(leading.textContent).toBe('1')
   // 42 i 77 sa powyzej progu 0,5; 99 z ocena 0,31 nie jest podejrzeniem i nie trafia na mape.
   expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
   expect(fetchStub.mock.calls.some((call) => String(call[0]).includes('/api/area/analyze'))).toBe(true)
+})
+
+/** Suwak progu w panelu — szukany po etykiecie, tak jak znalazlby go czytnik ekranu. */
+function thresholdSlider(): HTMLInputElement {
+  return screen.getByLabelText('Suspicion threshold') as HTMLInputElement
+}
+
+/**
+ * Najwazniejsza zgodnosc w calej tej funkcji: liczba „niezgloszonych z flaga" w panelu i liczba
+ * pomaranczowych obrysow na mapie musza pochodzic z tego samego progu. Inaczej panel opisywalby
+ * inne dachy, niz widac na ekranie.
+ */
+it('recounts the panel and the map from the same threshold', async () => {
+  stubApi()
+
+  render(<App />)
+  await scanAndAnalyse()
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
+
+  fireEvent.change(thresholdSlider(), { target: { value: '0.3' } })
+
+  // 99 (0,31) wchodzi do flagi razem z pozostalymi dwoma — panel i mapa mowia to samo.
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('2')
+  expect(screen.getByText('3 (100%)')).toBeDefined()
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77,99')
+
+  fireEvent.change(thresholdSlider(), { target: { value: '0.75' } })
+
+  // Powyzej 0,75 zostaje sam 77, ktory jest zgloszony, wiec liczba prowadzaca spada do zera.
+  expect(screen.getByTestId('suspected-not-listed').textContent).toBe('0')
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('77')
+})
+
+it('keeps the model default visible once the threshold is moved', async () => {
+  stubApi()
+
+  render(<App />)
+  await scanAndAnalyse()
+  expect(screen.queryByText(/Model default/)).toBeNull()
+
+  fireEvent.change(thresholdSlider(), { target: { value: '0.25' } })
+
+  expect(screen.getByText('Model default: 50%')).toBeDefined()
+})
+
+// Prog nalezy do wyniku, nie do sesji: nowa ocena zaczyna sie od progu, przy ktorym backend
+// policzyl swoje statystyki.
+it('starts a new analysis from the threshold the backend reported', async () => {
+  stubApi()
+
+  render(<App />)
+  await scanAndAnalyse()
+  fireEvent.change(thresholdSlider(), { target: { value: '0.9' } })
+  expect(thresholdSlider().value).toBe('0.9')
+
+  fireEvent.click(screen.getByText('Select'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Analyse roofs with the model'))
+  await screen.findByTestId('suspected-not-listed')
+
+  expect(thresholdSlider().value).toBe('0.5')
+  expect(screen.getByTestId('map-suspected-roofs').textContent).toBe('42,77')
 })
 
 it('shows the model error exactly as the backend worded it', async () => {
