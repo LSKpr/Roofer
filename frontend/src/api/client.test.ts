@@ -17,7 +17,15 @@ it('asks the configured backend for its health', async () => {
   const fetchStub = stubFetch(200, HEALTHY)
 
   await expect(fetchHealth('http://api.test')).resolves.toEqual(HEALTHY)
-  expect(fetchStub).toHaveBeenCalledWith('http://api.test/health')
+  expect(fetchStub).toHaveBeenCalledWith('http://api.test/api/health')
+})
+
+it('asks its own origin when no base url is configured', async () => {
+  const fetchStub = stubFetch(200, HEALTHY)
+
+  await fetchHealth('')
+
+  expect(fetchStub).toHaveBeenCalledWith('/api/health')
 })
 
 it('treats 503 as data, because a degraded backend still answers', async () => {

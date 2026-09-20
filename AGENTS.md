@@ -33,7 +33,7 @@ Docker nie jest w PATH w zwykłej powłoce: `export PATH="$PATH:/c/Program Files
 - Backend (z katalogu `backend/`, venv to `backend/.venv`, Python 3.11.9):
   - instalacja: `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`
   - migracje: `.venv/Scripts/python.exe -m scripts.migrate`
-  - serwer dev: `.venv/Scripts/python.exe -m scripts.serve`
+  - serwer dev: `.venv/Scripts/python.exe -m scripts.serve --watch` (bez `--watch` jeden przebieg)
   - testy: `.venv/Scripts/python.exe -m pytest`
   - testy z prawdziwą bazą: ustaw `TEST_DATABASE_URL=postgresql://roofer:roofer@localhost:5433/roofer`
   - lint: `.venv/Scripts/python.exe -m ruff check .` oraz `... -m ruff format --check .`
@@ -42,11 +42,19 @@ Docker nie jest w PATH w zwykłej powłoce: `export PATH="$PATH:/c/Program Files
 
 Jeden `.env` w katalogu głównym obsługuje oba procesy: backend czyta `../.env`, Vite ma `envDir: '..'`.
 
+## Kontrakt HTTP
+
+Wszystkie trasy backendu siedzą pod `/api` (sonda zdrowia to `/api/health`). Frontend woła
+**ścieżki relatywne** na własnym origin, a dev server Vite przekazuje `/api` do FastAPI
+(`API_PROXY_TARGET`). Dzięki temu CORS nie zależy od adresu, pod którym otwarto stronę — inaczej
+każdy nowy adres (preview, telefon w sieci lokalnej, deploy) wymagałby dopisania origina.
+`VITE_API_BASE_URL` ustawiaj tylko wtedy, gdy backend ma stać na innym origin niż frontend.
+
 ## Fazy
 
 | Faza | Zakres | Gotowe, gdy | Stan |
 | --- | --- | --- | --- |
-| P0 | Szkielet: PostGIS, FastAPI `/health`, mapa MapLibre, testy | mapa renderuje się w przeglądarce, `/health` zwraca wersję PostGIS | gotowe 2026-09-20 |
+| P0 | Szkielet: PostGIS, FastAPI `/api/health`, mapa MapLibre, testy | mapa renderuje się w przeglądarce, `/api/health` zwraca wersję PostGIS | gotowe 2026-09-20 |
 | P1 | Import snapshotów, tabele, dopasowanie budynek↔rejestr | liczby zgadzają się ze stopkami snapshotów, zapytanie o bbox 2×2 km poniżej 100 ms | — |
 | P2 | Kafle wektorowe `/tiles/buildings/{z}/{x}/{y}.mvt` + kolorowanie | całe województwo przewija się płynnie | — |
 | P3 | Skan obszaru: rysowanie prostokąta, lista, statystyki | liczby w panelu zgadzają się z mapą | — |
@@ -84,6 +92,19 @@ Nie zaczynaj fazy, której właściciel nie nazwał.
 9. **Bundle ma 1,24 MB** (prawie w całości MapLibre). Code splitting dopiero, gdy będzie miało sens.
 10. **Kafle OSM (`tile.openstreetmap.org`) są dobre na development.** Publiczne demo potrzebuje
     własnego źródła; atrybucja jest wymagana i pilnuje jej test `basemap.test.ts`.
+11. **`reload=True` uvicorna na tej maszynie nie działa i milczy o tym.** WatchFiles wykrywa zmianę,
+    wypisuje „Reloading…", nowy worker nigdy nie wstaje, a **stary dalej odpowiada** — serwer podaje
+    stary kod bez żadnego błędu. Dlatego `scripts/serve.py --watch` restartuje cały proces przez
+    `watchfiles.run_process`. Sprawdzone podbiciem wersji FastAPI i odczytem `/openapi.json`.
+    Nie wracaj do wbudowanego reloadu bez takiego dowodu.
+12. **`watchfiles` z `target_type="command"` dzieli komendę `shlex`-em z `posix=False`** na Windowsie,
+    więc ścieżki w cudzysłowach docierają z cudzysłowami. Używamy `target_type="function"` ze ścieżką
+    modułową `scripts.serve.serve`.
+13. **`vitest/config` nie eksportuje `loadEnv`** — `defineConfig` bierz z `vitest/config`,
+    a `loadEnv` z `vite`. Inaczej dev server wypisuje „server restart failed" i dalej chodzi
+    na starej konfiguracji.
+14. **Optymalizator zależności Vite gubi workera MapLibre**
+    (`maplibre-gl-worker.mjs ... does not exist`). Naprawia to `optimizeDeps: { exclude: ['maplibre-gl'] }`.
 
 ## Dane
 
@@ -112,5 +133,7 @@ nie jest dowodem czystego dachu. W UI mów „zgłoszony” / „niezgłoszony�
 - `frontendv2` — porzucone podejście: monorepo pnpm z Express/Prisma/MySQL i Next.js/Leaflet.
 - `main` — pusty initial commit.
 
-Nieśledzone pozostałości na dysku po sprzątaniu `v3`: `legacy/`, `packages/`, `node_modules/`
-i `.venv/` w katalogu głównym. Można je usunąć — zawartość jest na branchu `legacy`.
+Katalog roboczy `v3` jest posprzątany: `legacy/`, `packages/` oraz `node_modules/` i `.venv/`
+z katalogu głównego zostały usunięte z dysku 2026-09-20 (zawartość żyje na branchu `legacy`).
+Python dla starych narzędzi do ortofoto trzeba będzie postawić od nowa — root `.venv` z rasterio
+i shapely już nie istnieje.

@@ -30,7 +30,7 @@ def create_app(settings: Settings | None = None, pool_factory: Callable[[Setting
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
-    app.include_router(health.router)
+    app.include_router(health.router, prefix="/api")
     return app
 
 
