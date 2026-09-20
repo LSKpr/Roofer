@@ -33,6 +33,9 @@ Docker nie jest w PATH w zwykłej powłoce: `export PATH="$PATH:/c/Program Files
 - Backend (z katalogu `backend/`, venv to `backend/.venv`, Python 3.11.9):
   - instalacja: `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`
   - migracje: `.venv/Scripts/python.exe -m scripts.migrate`
+  - import danych: `.venv/Scripts/python.exe -m scripts.ingest --registry ../Additional_data/geoazbest-mazowieckie.geojson/geoazbest-mazowieckie.geojson --buildings ../Additional_data/budynki-osm-mazowieckie.geojson/budynki-osm-mazowieckie.geojson`
+  - samo przeliczenie dopasowan: `.venv/Scripts/python.exe -m scripts.ingest --match`
+  - proba bez pelnego importu: dodaj `--limit 50000`
   - serwer dev: `.venv/Scripts/python.exe -m scripts.serve --watch` (bez `--watch` jeden przebieg)
   - testy: `.venv/Scripts/python.exe -m pytest`
   - testy z prawdziwą bazą: ustaw `TEST_DATABASE_URL=postgresql://roofer:roofer@localhost:5433/roofer`
@@ -50,12 +53,42 @@ Wszystkie trasy backendu siedzą pod `/api` (sonda zdrowia to `/api/health`). Fr
 każdy nowy adres (preview, telefon w sieci lokalnej, deploy) wymagałby dopisania origina.
 `VITE_API_BASE_URL` ustawiaj tylko wtedy, gdy backend ma stać na innym origin niż frontend.
 
+## Dane w bazie (stan po P1)
+
+| | Wczytane | Wstawione | Odrzucone | Czas |
+| --- | ---: | ---: | ---: | ---: |
+| rejestr GeoAzbest | 379 122 | 379 011 | 111 (110 zdegenerowanych, 1 poza Polską) | 35 s |
+| budynki OSM | 2 585 219 | 2 585 219 | 0 | 302 s |
+
+Oba wyniki „wczytane" zgadzają się z `numberReturned` w stopkach snapshotów. W rejestrze 3 291
+geometrii było niepoprawnych i zostało naprawionych przez `ST_MakeValid`; dane Geofabrik są czyste
+u źródła. Dopasowanie: 419 321 przecinających się par, 334 310 spełnia regułę, **319 869 budynków
+(12,37%) ma dopasowanie**; 128 s. Po każdym imporcie leci `ANALYZE` — bez tego planer po masowym
+ładowaniu wybiera złe plany.
+
+Pomiary na pełnych danych: bbox 2×2 km w Śródmieściu to 2 139 budynków w **31,6 ms** z geometrią
+jako GeoJSON, a 3 365 budynków z dołączonymi atrybutami rejestru w 47,5 ms. Warunek P1 (100 ms)
+spełniony z zapasem.
+
+Baza zajmuje 1 444 MB (`osm_buildings` 1 205 MB, `registry_records` 165 MB,
+`building_registry_match` 55 MB). Import sprząta po sobie tabele tymczasowe — bez tego zostaje
+w bazie kopia całego snapshotu i rośnie ona do 3,3 GB.
+
+Obszary z mieszanym wynikiem, dobre na demo (komórki 0,01°): lon 21,08 / lat 51,25 — 628 budynków,
+341 zgłoszonych (54%); lon 19,97 / lat 53,09 — 48%; lon 21,39 / lat 51,10 — 48%. Warszawa ma 0,1%,
+więc na demo nie nadaje się w ogóle.
+
+Sprawdzenie niezależnym źródłem: trzy rekordy z `dataset/pilot/manifest.jsonl`, policzone starym
+toolingiem w EPSG:2180, mają w bazie powierzchnie 126,6 / 67,9 / 53,1 m² wobec 126,5 / 67,81 / 53,03
+w manifeście. Zgodność do 0,15% potwierdza, że `ST_Area(geography)` zamiast reprojekcji do 2180 jest
+wystarczające.
+
 ## Fazy
 
 | Faza | Zakres | Gotowe, gdy | Stan |
 | --- | --- | --- | --- |
 | P0 | Szkielet: PostGIS, FastAPI `/api/health`, mapa MapLibre, testy | mapa renderuje się w przeglądarce, `/api/health` zwraca wersję PostGIS | gotowe 2026-09-20 |
-| P1 | Import snapshotów, tabele, dopasowanie budynek↔rejestr | liczby zgadzają się ze stopkami snapshotów, zapytanie o bbox 2×2 km poniżej 100 ms | — |
+| P1 | Import snapshotów, tabele, dopasowanie budynek↔rejestr | liczby zgadzają się ze stopkami snapshotów, zapytanie o bbox 2×2 km poniżej 100 ms | gotowe 2026-09-20 |
 | P2 | Kafle wektorowe `/tiles/buildings/{z}/{x}/{y}.mvt` + kolorowanie | całe województwo przewija się płynnie | — |
 | P3 | Skan obszaru: rysowanie prostokąta, lista, statystyki | liczby w panelu zgadzają się z mapą | — |
 | P4 | Karta budynku: atrybuty rejestru, powierzchnia, ortofoto | klik w zgłoszony budynek pokazuje atrybuty i zdjęcie dachu | — |
@@ -105,6 +138,17 @@ Nie zaczynaj fazy, której właściciel nie nazwał.
     na starej konfiguracji.
 14. **Optymalizator zależności Vite gubi workera MapLibre**
     (`maplibre-gl-worker.mjs ... does not exist`). Naprawia to `optimizeDeps: { exclude: ['maplibre-gl'] }`.
+15. **Funkcja PL/pgSQL z blokiem `EXCEPTION` nie może być `PARALLEL SAFE`.** Blok otwiera
+    subtransakcję, a w zapytaniu równoległym kończy się to błędem `cannot start subtransactions
+    during a parallel operation`. `safe_geojson_geometry` jest `PARALLEL UNSAFE` (migracja 003),
+    więc parsowanie geometrii idzie jednowątkowo — i to jest cena za odporność na jeden zepsuty obiekt.
+16. **Postgres nie ma `round(double precision, integer)`.** Przy zaokrąglaniu `area_m2` albo
+    współrzędnych trzeba rzutować na `numeric`.
+17. **`psql -c "VACUUM ...; VACUUM ..."` nie działa** — kilka polecen w jednym `-c` leci w bloku
+    transakcji, a `VACUUM` tam nie wchodzi. Każde `VACUUM` w osobnym `-c`.
+18. **`ingest` nie commituje sam** — o transakcji decyduje wywołujący. Dzięki temu testy
+    integracyjne importują dane na prawdziwym PostGIS-ie i wycofują transakcję, więc nie niszczą
+    zaimportowanego województwa.
 
 ## Dane
 
@@ -115,6 +159,19 @@ GeoAzbest to **rejestr zgłoszeń** wyrobów azbestowych pozostałych do unieszk
 w warstwie publicznej, i opisuje azbest w obiekcie, nie udowodnione pokrycie dachu. Brak w rejestrze
 nie jest dowodem czystego dachu. W UI mów „zgłoszony” / „niezgłoszony” / „nieznany” — nigdy
 „wykryto azbest”. Status nieznany zapisujemy jako `null`, nigdy jako `false`.
+
+**Część geometrii w rejestrze to obrysy działek, nie dachów.** Mediana powierzchni rekordu to 99 m²,
+p95 to 305 m², ale 1 189 rekordów ma ponad 10 000 m², a największy 73,7 km². Jeden taki poligon
+przykrywa w całości każdy budynek w okolicy: przy naiwnej regule „przecięcie pokrywa co najmniej 10%
+powierzchni budynku albo rekordu” dawało to 33 899 fałszywych par i obszary w 100% zgłoszone. To nie
+są śmieci — takie rekordy mają poprawny `nr_dzialki`, a numer działki jest jedynym atrybutem tej warstwy.
+
+Obowiązująca reguła dopasowania (`app/ingest.py`, `MATCH_RULE`): przecięcie musi pokrywać co najmniej
+**10% obu** poligonów — co jest równoważne temu, że większy nie jest więcej niż 10× większy od
+mniejszego — **albo** co najmniej **50% poligonu rejestru** musi leżeć w budynku (1 754 pary, gdzie
+rekord narysowano symbolicznie w środku dużego dachu). Tabela `building_registry_match` trzyma
+**każdą** przecinającą się parę z obydwoma udziałami, więc zmiana progu nie wymaga ponownego
+liczenia przecięć.
 
 ## Konwencje
 
