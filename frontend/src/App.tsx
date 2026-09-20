@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 import { fetchHealth, type Health } from './api/client'
+import { BuildingPanel } from './components/BuildingPanel'
+import { Legend } from './components/Legend'
+import { ZoomHint } from './components/ZoomHint'
+import { useBuilding } from './hooks/useBuilding'
 import { MapView } from './map/MapView'
+import { INITIAL_ZOOM } from './map/basemap'
 
 type BackendState =
   | { kind: 'checking' }
@@ -16,6 +21,9 @@ function statusLabel(state: BackendState): { text: string; dot: string } {
 
 export function App() {
   const [state, setState] = useState<BackendState>({ kind: 'checking' })
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [zoom, setZoom] = useState(INITIAL_ZOOM)
+  const selection = useBuilding(selectedId)
 
   useEffect(() => {
     let current = true
@@ -44,8 +52,29 @@ export function App() {
           {status.text}
         </p>
       </header>
-      <main className="min-h-0 flex-1">
-        <MapView />
+
+      <main className="relative min-h-0 flex-1">
+        <MapView selectedId={selectedId} onSelect={setSelectedId} onZoomChange={setZoom} />
+
+        {/* Warstwa paneli nie moze przechwytywac przeciagania mapy — klikalne sa tylko same panele. */}
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between gap-3 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="pointer-events-auto">
+              <ZoomHint zoom={zoom} />
+            </div>
+            <div className="pointer-events-auto">
+              <BuildingPanel
+                building={selection.building}
+                loading={selection.loading}
+                error={selection.error}
+                onClose={() => setSelectedId(null)}
+              />
+            </div>
+          </div>
+          <div className="pointer-events-auto self-start">
+            <Legend />
+          </div>
+        </div>
       </main>
     </div>
   )

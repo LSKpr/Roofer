@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
 from app.db import Pool, create_pool
-from app.routes import health
+from app.routes import buildings, health, tiles
 
 
 @asynccontextmanager
@@ -30,7 +30,8 @@ def create_app(settings: Settings | None = None, pool_factory: Callable[[Setting
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
-    app.include_router(health.router, prefix="/api")
+    for router in (health.router, tiles.router, buildings.router):
+        app.include_router(router, prefix="/api")
     return app
 
 

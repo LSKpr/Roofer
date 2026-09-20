@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { fetchHealth, type Health } from './client'
+import { TILES_URL, fetchBuilding, fetchHealth, type Building, type Health } from './client'
 
 const HEALTHY: Health = { status: 'ok', database: 'ok', postgis: '3.5.1', detail: null }
 
@@ -39,4 +39,32 @@ it('rejects on any other status code', async () => {
   stubFetch(500, {})
 
   await expect(fetchHealth('http://api.test')).rejects.toThrow('kodem 500')
+})
+
+it('keeps the z/x/y placeholders that MapLibre fills in itself', () => {
+  expect(TILES_URL).toContain('/api/tiles/buildings/{z}/{x}/{y}.mvt')
+})
+
+it('reads a single building', async () => {
+  const building: Building = {
+    id: 7,
+    osmId: '382845106',
+    kind: 'building',
+    name: null,
+    areaM2: 106.1,
+    centroid: { lng: 21.8287, lat: 52.0721 },
+    status: 'listed',
+    registryMatches: [],
+    otherIntersecting: 0,
+  }
+  const fetchStub = stubFetch(200, building)
+
+  await expect(fetchBuilding(7, 'http://api.test')).resolves.toEqual(building)
+  expect(fetchStub).toHaveBeenCalledWith('http://api.test/api/buildings/7')
+})
+
+it('explains a missing building instead of showing a bare 404', async () => {
+  stubFetch(404, { detail: 'Nie ma budynku o tym identyfikatorze.' })
+
+  await expect(fetchBuilding(7, 'http://api.test')).rejects.toThrow('Nie ma budynku')
 })
