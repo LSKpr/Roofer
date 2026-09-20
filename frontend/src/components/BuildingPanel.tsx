@@ -136,8 +136,10 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
       </div>
 
       <Section title="Roof image">
-        {/* `key` zeruje stan wczytywania przy przejsciu na inny budynek — karta sie nie przemontowuje. */}
-        <RoofPhoto key={building.id} buildingId={building.id} />
+        {/* `key` zeruje stan wczytywania przy przejsciu na inny budynek — karta sie nie przemontowuje.
+            `roofImage` idzie dalej nietkniete: podpis pod kadrem podaje dzien nalotu i krawedz ramki
+            tylko wtedy, gdy backend je zna, a karta nie ma prawa tych liczb uzupelniac. */}
+        <RoofPhoto key={building.id} buildingId={building.id} roofImage={building.roofImage} />
       </Section>
 
       <Section title="Roof covering analysis">

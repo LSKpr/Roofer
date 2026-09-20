@@ -187,6 +187,34 @@ it('zamienia niedostepne ortofoto na komunikat, nie na pusta ramke', () => {
   expect(screen.getByText('Aerial imagery unavailable')).toBeDefined()
 })
 
+// Karta niczego z tego pola nie liczy — jej cala robota to przepuscic je do podpisu pod kadrem.
+it('przepuszcza zrodlo kadru do podpisu pod zdjeciem', () => {
+  stubAnalysis()
+
+  renderPanel(aBuilding({ id: 12, roofImage: { source: 'local', gsdM: 0.05, frameM: 12.8, acquiredOn: '2023-12-05' } }))
+
+  expect(screen.getByText(/Flown on 5 December 2023/)).toBeDefined()
+  expect(screen.getByText(/fixed 12\.8 m square/)).toBeDefined()
+})
+
+it('przy kadrze z WMS-a nie pokazuje zadnej daty nalotu', () => {
+  stubAnalysis()
+
+  const view = renderPanel(aBuilding({ roofImage: { source: 'wms', gsdM: null, frameM: null, acquiredOn: null } }))
+
+  expect(screen.getByText(/during the aerial survey/)).toBeDefined()
+  expect(view.container.textContent ?? '').not.toMatch(/December|Flown on|fixed 12/)
+})
+
+it('bez tego pola karta nie wymysla daty nalotu', () => {
+  stubAnalysis()
+
+  const view = renderPanel(aBuilding())
+
+  expect(screen.getByText(/during the aerial survey/)).toBeDefined()
+  expect(view.container.textContent ?? '').not.toMatch(/December|Flown on|fixed 12/)
+})
+
 it('oznacza status kwadratowa kropka w kolorze rejestru, a nie kolorowa plakietka', () => {
   renderPanel(aBuilding({ status: 'listed', registryMatches: [aMatch()] }))
   expect(screen.getByTestId('status-dot').className).toContain('bg-listed')

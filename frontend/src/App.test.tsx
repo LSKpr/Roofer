@@ -33,6 +33,18 @@ function chunksLabel(chunks: StubBounds[] | null | undefined): string {
   return chunks.map(areaLabel).join(' ')
 }
 
+/** Cel kamery tak, jak dostaje go mapa: obwiednia miejscowosci albo punkt z zoomem. */
+type StubFocus =
+  | { kind: 'bounds'; bounds: [number, number, number, number] }
+  | { kind: 'point'; center: [number, number]; zoom: number }
+
+/** Obwiednia w jednej linii, w kolejnosci mapy: zachod, poludnie, wschod, polnoc. */
+function focusLabel(focus: StubFocus | null | undefined): string {
+  if (!focus) return 'brak'
+  if (focus.kind === 'bounds') return `bounds ${focus.bounds.join(',')}`
+  return `point ${focus.center.join(',')} z${focus.zoom}`
+}
+
 vi.mock('./map/MapView', () => ({
   MapView: ({
     onSelect,
@@ -40,6 +52,7 @@ vi.mock('./map/MapView', () => ({
     onDrawComplete,
     basemap,
     drawing,
+    focus,
     scannedArea,
     showRegistry,
     suspectedRoofs,
@@ -51,6 +64,7 @@ vi.mock('./map/MapView', () => ({
     onDrawComplete?: (bounds: StubBounds) => void
     basemap?: string
     drawing?: boolean
+    focus?: StubFocus | null
     scannedArea?: StubBounds | null
     showRegistry?: boolean
     suspectedRoofs?: StubRoof[] | null
@@ -60,6 +74,7 @@ vi.mock('./map/MapView', () => ({
     <div>
       {/* Propsy sterujace mapa wystawiamy jako tekst, zeby dalo sie je sprawdzic bez MapLibre. */}
       <span data-testid="map-basemap">{basemap}</span>
+      <span data-testid="map-focus">{focusLabel(focus)}</span>
       <span data-testid="map-drawing">{drawing ? 'rysuje' : 'nie rysuje'}</span>
       <span data-testid="map-scanned-area">{areaLabel(scannedArea)}</span>
       <span data-testid="map-suspected-roofs">{roofsLabel(suspectedRoofs)}</span>
@@ -152,6 +167,39 @@ const ANALYSIS = {
 const LIMITS = { maxAreaKm2: 25, model: { maxBuildings: 100, maxAreaKm2: 4 } }
 
 /**
+ * Wsie, dla ktorych wycinki dachow leza na dysku. Nic w rejestrze ich nie wyroznia — wyroznia je
+ * tylko to, ze mamy dla nich zdjecia lokalnie.
+ */
+const VILLAGES = {
+  villages: [
+    {
+      name: 'Janików',
+      folder: 'miasteczko1',
+      sw: { lng: 21.5703, lat: 51.5575 },
+      ne: { lng: 21.6084, lat: 51.5802 },
+      crops: 372,
+      buildings: 458,
+      gsdM: 0.05,
+      frameM: 12.8,
+      acquiredFrom: '2023-12-05',
+      acquiredTo: '2023-12-12',
+    },
+    {
+      name: 'Bieganów',
+      folder: 'miasteczko2',
+      sw: { lng: 20.4712, lat: 52.0369 },
+      ne: { lng: 20.5063, lat: 52.0551 },
+      crops: 429,
+      buildings: 549,
+      gsdM: 0.05,
+      frameM: 12.8,
+      acquiredFrom: '2023-12-12',
+      acquiredTo: '2023-12-12',
+    },
+  ],
+}
+
+/**
  * Plan podzialu tego prostokata. Jeden kawalek rowny calemu zaznaczeniu to najzwyklejszy przypadek:
  * obszar, ktory miesci sie w jednym zadaniu modelu, i tak przechodzi przez plan.
  */
@@ -169,6 +217,7 @@ function stubApi(
     scan?: [number, unknown]
     plan?: [number, unknown]
     analysis?: [number, unknown]
+    villages?: [number, unknown]
   } = {},
 ) {
   const [healthStatus, healthBody] = overrides.health ?? [200, HEALTH]
@@ -176,8 +225,10 @@ function stubApi(
   const [scanStatus, scanBody] = overrides.scan ?? [200, SCAN]
   const [planStatus, planBody] = overrides.plan ?? [200, PLAN]
   const [analysisStatus, analysisBody] = overrides.analysis ?? [200, ANALYSIS]
+  const [villagesStatus, villagesBody] = overrides.villages ?? [200, VILLAGES]
   const fetchStub = vi.fn((url: string) => {
     if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => LIMITS })
+    if (url.includes('/api/villages')) return Promise.resolve({ status: villagesStatus, json: async () => villagesBody })
     if (url.includes('/api/area/scan')) return Promise.resolve({ status: scanStatus, json: async () => scanBody })
     if (url.includes('/api/area/plan')) return Promise.resolve({ status: planStatus, json: async () => planBody })
     if (url.includes('/api/area/analyze')) return Promise.resolve({ status: analysisStatus, json: async () => analysisBody })
@@ -238,6 +289,51 @@ it('hands the chosen basemap to the map', async () => {
   fireEvent.click(screen.getByText('Aerial'))
 
   expect(screen.getByTestId('map-basemap').textContent).toBe('orthophoto')
+})
+
+it('offers one jump button per village whose roof crops sit on disk', async () => {
+  stubApi()
+
+  render(<App />)
+
+  expect(await screen.findByRole('button', { name: /Janików/ })).toBeDefined()
+  expect(screen.getByRole('button', { name: /Bieganów/ })).toBeDefined()
+  // Podpis musi powiedziec, dlaczego akurat te wsie: mamy ich zdjecia na dysku, nic wiecej.
+  expect(screen.getByText(/Nothing in the register singles them out/)).toBeDefined()
+})
+
+// Skok idzie tym samym torem, co wybor miejscowosci z wyszukiwarki: obwiednia, nie punkt
+// ze zgadnietym zoomem.
+it('moves the map to the bounding box of the village the user picked', async () => {
+  stubApi()
+
+  render(<App />)
+  expect(screen.getByTestId('map-focus').textContent).toBe('brak')
+
+  fireEvent.click(await screen.findByRole('button', { name: /Bieganów/ }))
+
+  expect(screen.getByTestId('map-focus').textContent).toBe('bounds 20.4712,52.0369,20.5063,52.0551')
+})
+
+// Pusta lista znaczy „danych nie skonfigurowano", wiec nie ma czego pokazac.
+it('renders no village buttons when the backend has no cached crops', async () => {
+  stubApi({ villages: [200, { villages: [] }] })
+
+  render(<App />)
+  await screen.findByLabelText('Search for a place or address')
+
+  expect(screen.queryByTestId('village-jump')).toBeNull()
+  expect(screen.queryByText('Cached imagery')).toBeNull()
+})
+
+// Ta trasa jest dodatkiem do mapy: jej awaria nie ma prawa zepsuc reszty ekranu ani zaswiecic bledu.
+it('keeps the rest of the screen when the village list is unavailable', async () => {
+  stubApi({ villages: [500, {}] })
+
+  render(<App />)
+
+  expect(await screen.findByText(/max 25 km²/)).toBeDefined()
+  expect(screen.queryByTestId('village-jump')).toBeNull()
 })
 
 it('shows the area limit the backend reports, instead of a hardcoded number', async () => {
@@ -477,6 +573,7 @@ function stubStreamingApi(plan: unknown) {
   const queue: ((response: StubResponse) => void)[] = []
   const fetchStub = vi.fn((url: string) => {
     if (url.includes('/api/area/limits')) return Promise.resolve({ status: 200, json: async () => LIMITS })
+    if (url.includes('/api/villages')) return Promise.resolve({ status: 200, json: async () => VILLAGES })
     if (url.includes('/api/area/scan')) return Promise.resolve({ status: 200, json: async () => SCAN })
     if (url.includes('/api/area/plan')) return Promise.resolve({ status: 200, json: async () => plan })
     if (url.includes('/api/area/analyze')) {

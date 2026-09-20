@@ -281,6 +281,43 @@ to samo, innymi słowami: że model porównuje wygląd pokrycia na zdjęciu sate
 „właściciel zataił" — i wprost, że to jest **lista do sprawdzenia w terenie, nie lista ustaleń**.
 Zdania nie znikają, gdy lista jest pusta, bo dotyczą sekcji, nie wierszy.
 
+### Wycinki z dysku są wpięte (wariant B)
+
+`GET /api/buildings/{osm_id}/roof.png` **najpierw zagląda na dysk**, a do WMS-a GUGiK idzie tylko
+wtedy, gdy tego dachu nie ma w lokalnym eksporcie. Zmierzone na żywo: kadr z dysku **71 452 B
+w 7,4 ms bez ani jednego zapytania do sieci**, kadr z WMS-a 2,7 s — a w trakcie tego pomiaru GUGiK
+oddał dwa razy 503 po naszym dziesięciosekundowym timeoucie, czyli dokładnie to, przed czym te dane
+zabezpieczają.
+
+Konfiguracja to jedno pole: `VILLAGES_DIR` (puste = funkcja wyłączona, aplikacja działa jak dawniej).
+Indeks `osm_id → plik` czyta się **raz na proces**, leniwie; 801 wierszy CSV to 0,28 s.
+
+Trzy rzeczy, o których trzeba wiedzieć:
+
+- **Kadr z dysku nie odpowiada na `size`.** Plik ma 256 × 256 i w backendzie nie ma biblioteki do
+  skalowania (żadnego Pillow w zależnościach — nie dodawaj). Front pokazuje kadr w ramce o stałej
+  proporcji, więc to działa i dla miniatury 128 px, i dla karty 384 px.
+- **Karta mówi, który kadr widzi.** `/api/buildings/{osm_id}` oddaje `roofImage`
+  (`source`, `gsdM`, `frameM`, `acquiredOn`); przy `wms` wszystkie trzy liczby są `null`, bo daty
+  nalotu ani rodzimej rozdzielczości tamtej usługi **nie znamy i nie wolno ich zgadywać**. Przy kadrze
+  z dysku podpis podaje dzień nalotu, 5 cm i ostrzeżenie, że ramka 12,8 m przycina dłuższe dachy.
+- **`gsdM` i `frameM` bywają `null`** także dla wsi, która jest w spisie (różna rozdzielczość kadrów
+  w jednej wsi, niekwadratowa ramka). Front musi to znosić — mnożenie `null * 100` dawało „0 cm/px",
+  czyli liczbę wziętą z powietrza; teraz rozdzielczość po prostu nie jest pokazywana.
+
+`GET /api/villages` oddaje spis (nazwa, obwiednia z `boundary.geojson`, liczba kadrów i budynków,
+rozdzielczość, ramka, daty nalotu) i **pustą listę**, gdy danych nie ma. Frontend rysuje z tego dwa
+przyciski skoku pod wyszukiwarką; przy pustej liście nie renderuje niczego. Podpis przycisków mówi
+wprost, że te wsie **nie są niczym wyróżnione w rejestrze** — jedyna różnica jest w tym, że mamy ich
+kadry lokalnie.
+
+Pułapka operacyjna, która zjadła mi kwadrans: `scripts/serve.py --watch` pilnuje tylko katalogu
+`app/`, więc **zmiana `.env` nie restartuje serwera**. Do tego watchfiles trzyma port w procesie
+potomnym uruchomionym przez `multiprocessing.spawn`, którego wiersz polecenia **nie zawiera**
+`scripts.serve` — filtr po nazwie go nie łapie i stary proces dalej odpowiada na 8001 ze starą
+konfiguracją. Sprawdzaj właściciela portu (`Get-NetTCPConnection -LocalPort 8001`), a nie nazwę
+procesu.
+
 ### Dwie wsie w wycinkach GUGiK 5 cm (2026-09-20)
 
 Autor modelu wyeksportował **801 wycinków dachów z ortofotomapy GUGiK przy 5 cm na piksel** dla dwóch

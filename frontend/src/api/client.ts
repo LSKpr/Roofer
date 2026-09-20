@@ -15,6 +15,25 @@ export type RegistryMatch = {
   shareRecord: number
 }
 
+/**
+ * Skad wzielo sie zdjecie dachu i co z tego wynika dla podpisu pod nim.
+ *
+ * `local` to gotowy wycinek z dysku (eksport z ortofotomapy GUGiK dla dwoch wsi): znamy dzien
+ * nalotu, rodzima rozdzielczosc kadru i jego stala krawedz w metrach. `wms` to kadr policzony
+ * przez nas w chwili zapytania — wtedy wszystkie trzy liczby sa `null`, bo ani daty nalotu, ani
+ * rodzimej rozdzielczosci usluga WMS nie podaje. Zgadniecie ktorejkolwiek z nich byloby
+ * wymyslona metryka pod zdjeciem, wiec `null` znaczy „nie wiemy" i tak trzeba to pokazac.
+ */
+export type RoofImage = {
+  source: 'local' | 'wms'
+  /** Metry na piksel, np. 0.05. `null` przy `wms`. */
+  gsdM: number | null
+  /** Krawedz kadru w metrach, np. 12.8 — dach dluzszy od niej jest przyciety. `null` przy `wms`. */
+  frameM: number | null
+  /** Dzien nalotu jako `YYYY-MM-DD`. `null` przy `wms`. */
+  acquiredOn: string | null
+}
+
 /** `not_listed` znaczy „nie ma go w rejestrze", a nie „dach jest czysty". */
 export type Building = {
   /**
@@ -32,6 +51,12 @@ export type Building = {
   status: 'listed' | 'not_listed'
   registryMatches: RegistryMatch[]
   otherIntersecting: number
+  /**
+   * Zrodlo wycinka dachu. Backend oddaje to pole zawsze, ale front trzyma je jako opcjonalne:
+   * backend wdraza sie osobno, a starszy nie ma go wcale — wtedy karta ma pokazac dotychczasowy
+   * podpis, a nie date wziecia z niczego.
+   */
+  roofImage?: RoofImage | null
 }
 
 /**
@@ -274,6 +299,47 @@ export async function fetchAreaPlan(bounds: Bounds, baseUrl: string = API_BASE_U
   }
   if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
   return (await response.json()) as AreaPlan
+}
+
+/**
+ * Wies, dla ktorej wycinki dachow leza na dysku.
+ *
+ * Nic w rejestrze tych wsi nie wyroznia — wyroznia je tylko to, ze mamy dla nich zdjecia
+ * lokalnie, wiec kadry sa ostrzejsze i nie potrzebuja sieci. Liczby sa z eksportu: `crops` to
+ * dachy ze zdjeciem, `buildings` to wszystkie budynki w granicy wsi (czesc nie ma pokrycia
+ * w tej rozdzielczosci, wiec `crops` jest mniejsze).
+ */
+export type Village = {
+  name: string
+  /** Katalog eksportu (`miasteczko1`), czyli klucz tych danych po stronie backendu. */
+  folder: string
+  sw: Coordinates
+  ne: Coordinates
+  crops: number
+  buildings: number
+  /**
+   * Metry na piksel wycinkow z tej wsi, np. 0.05. `null`, gdy kadry w jednej wsi maja rozna
+   * rozdzielczosc — backend nie podaje wtedy zadnej, bo jedna liczba bylaby polprawda.
+   */
+  gsdM: number | null
+  /** Stala krawedz kadru w metrach, np. 12.8. `null`, gdy kadr nie jest kwadratem. */
+  frameM: number | null
+  /** Pierwszy i ostatni dzien nalotu jako `YYYY-MM-DD`. */
+  acquiredFrom: string
+  acquiredTo: string
+}
+
+/**
+ * Wsie z wycinkami na dysku.
+ *
+ * Pusta lista jest prawidlowa odpowiedzia (dane nieskonfigurowane), a nie bledem — front nie ma
+ * wtedy nic renderowac. Wyjatek zostaje tylko dla kodow, ktore znacza awarie.
+ */
+export async function fetchVillages(baseUrl: string = API_BASE_URL): Promise<Village[]> {
+  const response = await fetch(`${baseUrl}/api/villages`)
+  if (response.status !== 200) throw new Error(`Backend responded with status ${response.status}`)
+  const body = (await response.json()) as { villages: Village[] }
+  return body.villages
 }
 
 /** Miejsce z wyszukiwarki. `bbox` jest w kolejnosci [south, west, north, east]. */

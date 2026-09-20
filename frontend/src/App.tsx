@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   fetchAreaLimits,
   fetchHealth,
+  fetchVillages,
   type AreaAnalysis,
   type Bounds,
   type Health,
   type Place,
   type RoofGeometry,
   type SuspectedRoof,
+  type Village,
 } from './api/client'
 import { BasemapSwitcher } from './components/BasemapSwitcher'
 import { BuildingPanel } from './components/BuildingPanel'
@@ -15,6 +17,7 @@ import { Legend } from './components/Legend'
 import { RegistryToggle } from './components/RegistryToggle'
 import { ScanPanel } from './components/ScanPanel'
 import { SearchBox } from './components/SearchBox'
+import { VillageJump } from './components/VillageJump'
 import { ZoomHint } from './components/ZoomHint'
 import { useAreaAnalysis } from './hooks/useAreaAnalysis'
 import { useAreaScan } from './hooks/useAreaScan'
@@ -72,6 +75,15 @@ function focusOn(place: Place): MapFocus {
   return { kind: 'point', center: [place.lng, place.lat], zoom: 16 }
 }
 
+/**
+ * Wies z wycinkami na dysku trafia na mape tym samym mechanizmem, co miejscowosc z wyszukiwarki:
+ * obwiednia, nie punkt ze zgadnietym zoomem. Kolejnosc jest ta, ktorej chce mapa —
+ * [zachod, poludnie, wschod, polnoc].
+ */
+function focusOnVillage(village: Village): MapFocus {
+  return { kind: 'bounds', bounds: [village.sw.lng, village.sw.lat, village.ne.lng, village.ne.lat] }
+}
+
 export function App() {
   const [state, setState] = useState<BackendState>({ kind: 'checking' })
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -92,6 +104,11 @@ export function App() {
    */
   const [scannedArea, setScannedArea] = useState<Bounds | null>(null)
   const [limitKm2, setLimitKm2] = useState<number | null>(null)
+  /**
+   * Wsie, dla ktorych wycinki dachow leza na dysku. Pusta lista jest stanem poczatkowym i takze
+   * odpowiedzia backendu bez tych danych — w obu przypadkach nie renderuje sie zaden przycisk.
+   */
+  const [villages, setVillages] = useState<Village[]>([])
   const selection = useBuilding(selectedId)
   const scan = useAreaScan()
   /**
@@ -133,6 +150,21 @@ export function App() {
     let current = true
     fetchAreaLimits()
       .then((limits) => current && setLimitKm2(limits.maxAreaKm2))
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [])
+
+  /*
+   * Wsie z wycinkami na dysku. Blad i pusta lista znacza tutaj to samo — nie ma czego pokazac —
+   * wiec `catch` zostawia pusta liste i przyciski skoku po prostu sie nie renderuja. Ta trasa jest
+   * dodatkiem do mapy, wiec jej brak nie ma prawa zepsuc reszty ekranu.
+   */
+  useEffect(() => {
+    let current = true
+    fetchVillages()
+      .then((list) => current && setVillages(list))
       .catch(() => undefined)
     return () => {
       current = false
@@ -217,39 +249,52 @@ export function App() {
       {/* Warstwa paneli nie przechwytuje przeciagania mapy — klikalne sa tylko same panele. */}
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between gap-4 p-4">
         <div className="flex items-start justify-between gap-4">
-          <div className="pointer-events-auto w-88 rounded-card border border-hairline bg-surface shadow-[0_1px_3px_rgba(5,28,44,0.08)]">
-            <div className="flex items-start justify-between gap-3 px-4 pt-3 pb-2.5">
-              <div>
-                <p className="font-display text-base leading-none text-ink">Roofer</p>
-                <p className="label-micro mt-1.5">Asbestos register · Masovian Voivodeship</p>
+          {/* Lewa kolumna: panel z wyszukiwarka, a pod nim skoki do wsi z wycinkami na dysku —
+              oba sluza do tego samego, czyli do przeniesienia mapy w inne miejsce. Szerokosc
+              stoi na kolumnie, zeby oba panele byly jednakowo szerokie. */}
+          <div className="flex w-88 flex-col gap-3">
+            <div className="pointer-events-auto rounded-card border border-hairline bg-surface shadow-[0_1px_3px_rgba(5,28,44,0.08)]">
+              <div className="flex items-start justify-between gap-3 px-4 pt-3 pb-2.5">
+                <div>
+                  <p className="font-display text-base leading-none text-ink">Roofer</p>
+                  <p className="label-micro mt-1.5">Asbestos register · Masovian Voivodeship</p>
+                </div>
+                <span
+                  title={status.text}
+                  className={`mt-1 inline-block h-1.5 w-1.5 shrink-0 ${status.dot}`}
+                  data-testid="backend-status"
+                />
+                <span className="sr-only">{status.text}</span>
               </div>
-              <span
-                title={status.text}
-                className={`mt-1 inline-block h-1.5 w-1.5 shrink-0 ${status.dot}`}
-                data-testid="backend-status"
-              />
-              <span className="sr-only">{status.text}</span>
+
+              <SearchBox onPick={(place) => setFocus(focusOn(place))} className="border-t border-hairline" />
+
+              <div className="flex items-center justify-between gap-3 border-t border-hairline px-4 py-2.5">
+                <div className="min-w-0">
+                  <p className="label-micro">Area scan</p>
+                  <p className="mt-0.5 truncate text-xs text-ink-muted">{scanHint}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={drawing ? () => setDrawing(false) : startDrawing}
+                  className={
+                    drawing
+                      ? 'shrink-0 rounded-card border border-hairline bg-surface px-3 py-1.5 text-xs leading-none text-ink-muted hover:bg-surface-muted hover:text-ink'
+                      : 'shrink-0 rounded-card border border-ink bg-ink px-3 py-1.5 text-xs leading-none text-surface hover:opacity-90'
+                  }
+                >
+                  {drawing ? 'Cancel' : 'Select'}
+                </button>
+              </div>
             </div>
 
-            <SearchBox onPick={(place) => setFocus(focusOn(place))} className="border-t border-hairline" />
-
-            <div className="flex items-center justify-between gap-3 border-t border-hairline px-4 py-2.5">
-              <div className="min-w-0">
-                <p className="label-micro">Area scan</p>
-                <p className="mt-0.5 truncate text-xs text-ink-muted">{scanHint}</p>
-              </div>
-              <button
-                type="button"
-                onClick={drawing ? () => setDrawing(false) : startDrawing}
-                className={
-                  drawing
-                    ? 'shrink-0 rounded-card border border-hairline bg-surface px-3 py-1.5 text-xs leading-none text-ink-muted hover:bg-surface-muted hover:text-ink'
-                    : 'shrink-0 rounded-card border border-ink bg-ink px-3 py-1.5 text-xs leading-none text-surface hover:opacity-90'
-                }
-              >
-                {drawing ? 'Cancel' : 'Select'}
-              </button>
-            </div>
+            {/* Pusta lista nie renderuje niczego, wiec przy backendzie bez tych danych kolumna
+                wyglada dokladnie tak, jak wygladala. */}
+            <VillageJump
+              villages={villages}
+              onPick={(village) => setFocus(focusOnVillage(village))}
+              className="pointer-events-auto"
+            />
           </div>
 
           <div className="pointer-events-auto mt-1">

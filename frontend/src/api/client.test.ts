@@ -6,11 +6,13 @@ import {
   fetchAreaPlan,
   fetchBuilding,
   fetchHealth,
+  fetchVillages,
   type AreaAnalysis,
   type AreaPlan,
   type Bounds,
   type Building,
   type Health,
+  type Village,
 } from './client'
 
 const HEALTHY: Health = { status: 'ok', database: 'ok', postgis: '3.5.1', detail: null }
@@ -79,6 +81,63 @@ it('explains a missing building instead of showing a bare 404', async () => {
   stubFetch(404, { detail: 'There is no building with this identifier.' })
 
   await expect(fetchBuilding(7, 'http://api.test')).rejects.toThrow('no building with this identifier')
+})
+
+// Karta podaje dzien nalotu i krawedz ramki tylko wtedy, gdy backend je przyslal, wiec te trzy
+// liczby musza dojsc do frontu nietkniete — takze jako `null`, ktore znaczy „nie wiemy".
+it('carries the roof image source through untouched', async () => {
+  const building: Building = {
+    id: 7,
+    kind: 'building',
+    osmType: 'house',
+    name: null,
+    areaM2: 106.1,
+    centroid: { lng: 21.5891, lat: 51.5721 },
+    status: 'not_listed',
+    registryMatches: [],
+    otherIntersecting: 0,
+    roofImage: { source: 'local', gsdM: 0.05, frameM: 12.8, acquiredOn: '2023-12-05' },
+  }
+  stubFetch(200, building)
+
+  await expect(fetchBuilding(7, 'http://api.test')).resolves.toEqual(building)
+})
+
+/** Janikow tak, jak opisuje go backend: obwiednia, liczby eksportu i zakres dat nalotu. */
+const VILLAGES: Village[] = [
+  {
+    name: 'Janików',
+    folder: 'miasteczko1',
+    sw: { lng: 21.5703, lat: 51.5575 },
+    ne: { lng: 21.6084, lat: 51.5802 },
+    crops: 372,
+    buildings: 458,
+    gsdM: 0.05,
+    frameM: 12.8,
+    acquiredFrom: '2023-12-05',
+    acquiredTo: '2023-12-12',
+  },
+]
+
+it('reads the villages whose roof crops sit on disk', async () => {
+  const fetchStub = stubFetch(200, { villages: VILLAGES })
+
+  await expect(fetchVillages('http://api.test')).resolves.toEqual(VILLAGES)
+  expect(fetchStub).toHaveBeenCalledWith('http://api.test/api/villages')
+})
+
+// Pusta lista znaczy „danych nie skonfigurowano" i jest normalna odpowiedzia: front ma wtedy nic
+// nie pokazac. Wyjatek zrobilby z braku danych awarie i zaswiecil blad na ekranie.
+it('treats an empty village list as data, not as an error', async () => {
+  stubFetch(200, { villages: [] })
+
+  await expect(fetchVillages('http://api.test')).resolves.toEqual([])
+})
+
+it('rejects an unexpected status from the village list', async () => {
+  stubFetch(500, {})
+
+  await expect(fetchVillages('http://api.test')).rejects.toThrow('status 500')
 })
 
 const BOUNDS: Bounds = { ne: { lng: 21.61, lat: 51.37 }, sw: { lng: 21.58, lat: 51.35 } }

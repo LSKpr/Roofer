@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     imagery_cache_tiles: int = 6000
     imagery_cache_mb: int = 768
 
+    # Katalog z wycinkami dachow wyeksportowanymi przez autora modelu (801 kadrow GUGiK przy 5 cm
+    # na piksel dla dwoch wsi). Dane leza POZA repozytorium, bo to 70 MB PNG-ow, wiec sciezka jest
+    # inna na kazdej maszynie i domyslnie jest PUSTA: bez niej aplikacja dziala dokladnie jak dotad
+    # (kadry z WMS-a GUGiK, `/api/villages` oddaje pusta liste). Patrz app/localcrops.py.
+    villages_dir: str = ""
+
     # Wyszukiwanie miejsc (Nominatim OSM). Regulamin wymaga User-Agenta, ktory identyfikuje
     # aplikacje i pozwala sie z nami skontaktowac; anonimowe zapytania sa blokowane.
     nominatim_url: str = "https://nominatim.openstreetmap.org/search"
