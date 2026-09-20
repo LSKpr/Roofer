@@ -19,7 +19,10 @@ export type RegistryMatch = {
 export type Building = {
   id: number
   osmId: string | null
+  /** `fclass` z warstwy Geofabrik — dla kazdego budynku to 'building', wiec nic nie wnosi. */
   kind: string | null
+  /** Rodzaj z OSM (`type`): 'house', 'apartments', 'outbuilding', 'garage'. Ma go ~65% budynkow. */
+  osmType: string | null
   name: string | null
   areaM2: number
   centroid: { lng: number; lat: number }
@@ -42,6 +45,38 @@ export const ORTHOPHOTO_TILES_URL = `${API_BASE_URL}/api/imagery/orthophoto/{z}/
 /** Wycinek ortofoto wycentrowany na dachu; backend wymusza kwadrat i margines. */
 export function roofImageUrl(id: number, size = 384, baseUrl: string = API_BASE_URL): string {
   return `${baseUrl}/api/buildings/${id}/roof.png?size=${size}`
+}
+
+/**
+ * Ocena pokrycia dachu ze zdjecia.
+ *
+ * `source` jest najwazniejszym polem: `mock` znaczy wynik demonstracyjny, ktory NIE pochodzi
+ * z zadnego modelu i nie wolno go pokazac jak prawdziwej analizy. `unavailable` to brak
+ * odpowiedzi — wtedy `probability` jest `null`, nigdy 0, bo zero znaczyloby „model sprawdzil
+ * i nie widzi eternitu".
+ *
+ * `verdict` ma trzy stany, nie dwa: `suspected` (podejrzenie falistego, szarego pokrycia),
+ * `unlikely` (model nie widzi takiego pokrycia) i `unknown` (nie wiadomo).
+ */
+export type RoofAnalysis = {
+  source: 'mock' | 'model' | 'unavailable'
+  verdict: 'suspected' | 'unlikely' | 'unknown'
+  /** 0–1 albo null. */
+  probability: number | null
+  modelName: string | null
+  /** Zdanie po polsku, gotowe do pokazania: co ten wynik znaczy i czego nie dowodzi. */
+  note: string
+}
+
+export async function fetchRoofAnalysis(id: number, baseUrl: string = API_BASE_URL): Promise<RoofAnalysis> {
+  const response = await fetch(`${baseUrl}/api/buildings/${id}/analysis`)
+  if (response.status === 404) {
+    throw new Error('Nie ma budynku o tym identyfikatorze.')
+  }
+  if (response.status !== 200) {
+    throw new Error(`Backend odpowiedzial kodem ${response.status}`)
+  }
+  return (await response.json()) as RoofAnalysis
 }
 
 export type Coordinates = { lng: number; lat: number }

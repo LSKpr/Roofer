@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react'
 import type { Building, RegistryMatch } from '../api/client'
+import { useRoofAnalysis } from '../hooks/useRoofAnalysis'
+import { buildingTypeLabel } from '../lib/osmBuildingType'
+import { RoofAnalysis } from './RoofAnalysis'
 import { RoofPhoto } from './RoofPhoto'
 
 type BuildingPanelProps = {
@@ -88,6 +91,9 @@ function Shell({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 export function BuildingPanel({ building, loading, error, onClose }: BuildingPanelProps) {
+  // Hook musi stac przed wyjsciami warunkowymi; dla braku budynku sam nie odpytuje niczego.
+  const roof = useRoofAnalysis(building?.id ?? null)
+
   if (loading) {
     return (
       <Shell title="Szczegóły budynku" onClose={onClose}>
@@ -107,6 +113,7 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
   if (!building) return null
 
   const listed = building.status === 'listed'
+  const buildingType = buildingTypeLabel(building.osmType)
 
   return (
     <Shell title={headerTitle(building)} onClose={onClose}>
@@ -133,8 +140,13 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
         <RoofPhoto key={building.id} buildingId={building.id} />
       </Section>
 
+      <Section title="Analiza pokrycia dachu">
+        <RoofAnalysis analysis={roof.analysis} loading={roof.loading} error={roof.error} />
+      </Section>
+
       <Section title="Dane budynku">
         <dl>
+          {buildingType ? <Row label="Rodzaj (OSM)" value={buildingType} /> : null}
           <Row
             label="Centroid (lng, lat)"
             value={`${building.centroid.lng.toFixed(5)}, ${building.centroid.lat.toFixed(5)}`}

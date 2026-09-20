@@ -1,7 +1,24 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
-import type { Building, RegistryMatch } from '../api/client'
+import { afterEach, expect, it, vi } from 'vitest'
+import type { Building, RegistryMatch, RoofAnalysis } from '../api/client'
 import { BuildingPanel } from './BuildingPanel'
+
+const MOCK_ANALYSIS: RoofAnalysis = {
+  source: 'mock',
+  verdict: 'suspected',
+  probability: 0.56,
+  modelName: null,
+  note: 'Wynik demonstracyjny, bez modelu ML.',
+}
+
+/** Karta sama pobiera analize pokrycia, wiec kazdy render dotyka sieci. */
+function stubAnalysis(analysis: RoofAnalysis = MOCK_ANALYSIS) {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200, json: async () => analysis }))
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 function aMatch(overrides: Partial<RegistryMatch> = {}): RegistryMatch {
   return {
@@ -20,6 +37,7 @@ function aBuilding(overrides: Partial<Building> = {}): Building {
     id: 7,
     osmId: '382845106',
     kind: 'building',
+    osmType: 'house',
     name: 'Stodoła',
     areaM2: 165.4,
     centroid: { lng: 21.083124, lat: 51.250471 },
@@ -156,4 +174,32 @@ it('oznacza status kwadratowa kropka w kolorze rejestru, a nie kolorowa plakietk
   const dots = screen.getAllByTestId('status-dot')
   expect(dots[1].className).toContain('bg-not-listed')
   expect(dots[1].className).not.toContain('rounded')
+})
+
+it('pokazuje analize pokrycia dachu i ostrzega, ze wynik jest demonstracyjny', async () => {
+  stubAnalysis()
+
+  renderPanel(aBuilding({ id: 12 }))
+
+  expect(await screen.findByText(/Podejrzenie pokrycia falistego/)).toBeDefined()
+  expect(screen.getByText('56%')).toBeDefined()
+  // Bez tego ostrzezenia wymyslona liczba wygladalaby jak wynik modelu.
+  expect(screen.getByText(/Wynik demonstracyjny · model niepodłączony/)).toBeDefined()
+})
+
+it('pokazuje rodzaj budynku z OSM po polsku, razem z surowym tagiem', () => {
+  stubAnalysis()
+
+  renderPanel(aBuilding({ osmType: 'outbuilding' }))
+
+  expect(screen.getByText('Rodzaj (OSM)')).toBeDefined()
+  expect(screen.getByText('budynek gospodarczy · outbuilding')).toBeDefined()
+})
+
+it('nie pokazuje wiersza rodzaju, gdy OSM go nie podaje', () => {
+  stubAnalysis()
+
+  renderPanel(aBuilding({ osmType: null }))
+
+  expect(screen.queryByText('Rodzaj (OSM)')).toBeNull()
 })

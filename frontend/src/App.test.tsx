@@ -48,6 +48,7 @@ const BUILDING: Building = {
   id: 42,
   osmId: '382845106',
   kind: 'building',
+  osmType: 'house',
   name: null,
   areaM2: 106.1,
   centroid: { lng: 21.8287, lat: 52.0721 },

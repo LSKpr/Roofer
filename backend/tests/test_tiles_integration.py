@@ -62,7 +62,20 @@ def test_building_details_include_the_matched_registry_record(connection: psycop
     ).fetchone()
 
     assert row is not None
-    names = ["id", "osm_id", "fclass", "name", "area_m2", "lng", "lat", "registry_matches", "records", "other"]
+    # Kolejnosc kolumn z BUILDING_SQL. Zmiana zapytania musi tu byc widoczna, dlatego `strict=True`.
+    names = [
+        "id",
+        "osm_id",
+        "fclass",
+        "osm_type",
+        "name",
+        "area_m2",
+        "lng",
+        "lat",
+        "registry_matches",
+        "records",
+        "other",
+    ]
     values = dict(zip(names, row, strict=True))
     assert values["area_m2"] > 0
     assert values["registry_matches"] >= 1

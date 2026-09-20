@@ -71,9 +71,12 @@ FROM stg_parsed_features
 """
 
 INSERT_BUILDINGS = f"""
-INSERT INTO osm_buildings (osm_id, fclass, name, geom, centroid, area_m2, repaired)
+INSERT INTO osm_buildings (osm_id, fclass, osm_type, name, geom, centroid, area_m2, repaired)
 SELECT properties->>'osm_id',
        properties->>'fclass',
+       -- `fclass` to zawsze 'building'; rodzaj jest w `type`. Puste ciagi zapisujemy jako NULL,
+       -- bo „nie podano rodzaju" i „rodzaj to pusty napis" to dla interfejsu to samo.
+       nullif(properties->>'type', ''),
        properties->>'name',
        geom,
        ST_Centroid(geom),

@@ -8,6 +8,7 @@ BUILDING_SQL = f"""
 SELECT b.id,
        b.osm_id,
        b.fclass,
+       b.osm_type,
        b.name,
        round(b.area_m2::numeric, 1)::float8 AS area_m2,
        ST_X(b.centroid)  AS lng,

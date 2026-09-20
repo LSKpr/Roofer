@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     nominatim_user_agent: str = "Roofer/0.1 (inwentaryzacja azbestu; https://github.com/LSKpr/Roofer)"
     nominatim_timeout_s: float = 5.0
 
+    # Ocena pokrycia dachu (gniazdo na model ML). `mock` to jawnie oznaczona atrapa: odpowiedz ma
+    # `source: "mock"`, `modelName: null` i note o wyniku demonstracyjnym. `none` wylacza ocene —
+    # endpoint oddaje wtedy `source: "unavailable"` i `probability: null`, czyli „nie wiemy".
+    # Dostawce prawdziwego modelu dopisuje sie w app/prediction.py (PROVIDERS), nie w trasie.
+    prediction_provider: str = "mock"
+
     @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

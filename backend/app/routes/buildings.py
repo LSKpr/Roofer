@@ -35,6 +35,8 @@ class Building(Camel):
     id: int
     osm_id: str | None
     kind: str | None
+    """Rodzaj z OSM (`type`): house, apartments, outbuilding, garage. None, gdy nie podano."""
+    osm_type: str | None
     name: str | None
     area_m2: float
     centroid: Coordinates
@@ -48,6 +50,7 @@ def to_building(row: dict[str, Any]) -> Building:
         id=row["id"],
         osm_id=row["osm_id"],
         kind=row["fclass"],
+        osm_type=row["osm_type"],
         name=row["name"],
         area_m2=row["area_m2"],
         centroid=Coordinates(lng=row["lng"], lat=row["lat"]),

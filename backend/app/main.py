@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
 from app.db import Pool, create_pool
-from app.routes import area, buildings, geocode, health, imagery, tiles
+from app.routes import area, buildings, geocode, health, imagery, prediction, tiles
 
 
 async def close_http_clients(app: FastAPI) -> None:
@@ -41,7 +41,16 @@ def create_app(settings: Settings | None = None, pool_factory: Callable[[Setting
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
-    for router in (health.router, tiles.router, buildings.router, imagery.router, area.router, geocode.router):
+    routers = (
+        health.router,
+        tiles.router,
+        buildings.router,
+        imagery.router,
+        area.router,
+        geocode.router,
+        prediction.router,
+    )
+    for router in routers:
         app.include_router(router, prefix="/api")
     return app
 
