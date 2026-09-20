@@ -46,6 +46,12 @@ export function App() {
   const [focus, setFocus] = useState<MapFocus | null>(null)
   const [basemap, setBasemap] = useState<BasemapId>(DEFAULT_BASEMAP)
   const [drawing, setDrawing] = useState(false)
+  /**
+   * Obszar, ktorego dotyczy wynik na ekranie. Trzyma go `App`, a nie modul rysowania: prostokat
+   * jest stanem aplikacji (zyje tyle, co wynik), a rysowanie jest stanem interakcji z myszka
+   * (konczy sie na `mouseup`). Dzieki temu obszar zostaje widoczny pod karta budynku i pod bledem.
+   */
+  const [scannedArea, setScannedArea] = useState<Bounds | null>(null)
   const [limitKm2, setLimitKm2] = useState<number | null>(null)
   const selection = useBuilding(selectedId)
   const scan = useAreaScan()
@@ -76,15 +82,25 @@ export function App() {
 
   const status = statusLabel(state)
 
-  function startDrawing() {
-    // Karta budynku i wynik poprzedniego skanu zaslanialyby nowy wynik.
-    setSelectedId(null)
+  /** Wynik i jego obszar sa jednym: zamkniecie panelu zdejmuje takze prostokat z mapy. */
+  function clearScan() {
     scan.clear()
+    setScannedArea(null)
+  }
+
+  function startDrawing() {
+    // Karta budynku i wynik poprzedniego skanu zaslanialyby nowy wynik, a stary prostokat
+    // zostalby na mapie obok nowego i nie daloby sie odczytac, ktorego dotycza liczby.
+    setSelectedId(null)
+    clearScan()
     setDrawing(true)
   }
 
   function handleDrawComplete(bounds: Bounds) {
     setDrawing(false)
+    // Obszar zapamietujemy przed odpowiedzia backendu: przy bledzie („obszar za duzy") uzytkownik
+    // tym bardziej musi widziec, co zaznaczyl, zeby poprawic zaznaczenie.
+    setScannedArea(bounds)
     scan.run(bounds)
   }
 
@@ -111,6 +127,7 @@ export function App() {
         drawing={drawing}
         onDrawComplete={handleDrawComplete}
         onDrawCancel={() => setDrawing(false)}
+        scannedArea={scannedArea}
       />
 
       {/* Warstwa paneli nie przechwytuje przeciagania mapy — klikalne sa tylko same panele. */}
@@ -172,7 +189,7 @@ export function App() {
                   scan={scan.scan}
                   loading={scan.loading}
                   error={scan.error}
-                  onClose={scan.clear}
+                  onClose={clearScan}
                   onPickBuilding={handlePickBuilding}
                 />
               )}

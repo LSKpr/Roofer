@@ -15,6 +15,12 @@ import {
   POINT_MIN_ZOOM,
   POLYGON_MIN_ZOOM,
   POLYGON_SOURCE_LAYER,
+  SCAN_AREA_FILL_OPACITY,
+  SCAN_AREA_LAYER_IDS,
+  SCAN_AREA_LAYERS,
+  SCAN_AREA_LINE_WIDTH,
+  SCAN_AREA_SOURCE_ID,
+  SELECTED_COLOR,
   SOURCE_ID,
   SOURCE_MAX_ZOOM,
   STATUS_COLORS,
@@ -22,10 +28,13 @@ import {
   buildingsOutlineLayer,
   buildingsSource,
   listedDensityLayer,
+  scanAreaFillLayer,
+  scanAreaOutlineLayer,
   selectedFillLayer,
   selectedFilter,
   selectedOutlineLayer,
 } from './layers'
+import { DRAW_LAYER_IDS, DRAW_SOURCE_ID, drawFillLayer, drawOutlineLayer } from './rectangleDraw'
 
 /** Zwraca kanaly RGB i alfe; przyjmuje i `#rrggbb`, i `rgba(r, g, b, a)`, bo rampa ma oba zapisy. */
 function channels(color: string): [number, number, number, number] {
@@ -207,6 +216,58 @@ it('keeps the highlight above the data and out of the click targets', () => {
       expect(ids.indexOf(highlight)).toBeGreaterThan(ids.indexOf(clickable))
     }
     expect(CLICKABLE_LAYER_IDS).not.toContain(highlight)
+  }
+})
+
+// Trzy rodziny warstw zyja na jednej mapie: dane z kafla, podglad rysowania i policzony obszar.
+// Wspolny identyfikator znaczylby, ze jedna po cichu nadpisuje druga.
+it('keeps the scanned area ids disjoint from the tile layers and from the draw preview', () => {
+  const ids = Object.values(SCAN_AREA_LAYER_IDS)
+  expect(ids).toEqual([SCAN_AREA_LAYERS[0].id, SCAN_AREA_LAYERS[1].id])
+  for (const id of [...ids, SCAN_AREA_SOURCE_ID]) {
+    expect(Object.values(LAYER_IDS)).not.toContain(id)
+    expect(Object.values(DRAW_LAYER_IDS)).not.toContain(id)
+    expect(id).not.toBe(SOURCE_ID)
+    expect(id).not.toBe(DRAW_SOURCE_ID)
+  }
+  // Obszar nie jest dana z kafla, wiec nie moze wejsc miedzy warstwy budynkow.
+  expect(MAP_LAYERS.map((layer) => layer.id)).not.toContain(SCAN_AREA_LAYER_IDS.fill)
+})
+
+// Prostokat przykrywa wszystko, co zaznaczono. Klikalny zabralby kazde klikniecie budynkom.
+it('never makes the scanned area clickable', () => {
+  expect(CLICKABLE_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.fill)
+  expect(CLICKABLE_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.outline)
+  expect(HIGHLIGHT_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.fill)
+})
+
+// Ramka podgladu mowi „trwa zaznaczanie", prostokat obszaru — „to jest obszar, ktorego dotycza
+// liczby". Roznica jest w linii: przerywana wobec ciaglej. Gdyby obie byly takie same,
+// uzytkownik nie wiedzialby, czy zaznaczenie sie skonczylo.
+it('tells the scanned area apart from the draw preview by a solid line', () => {
+  expect(drawOutlineLayer.paint?.['line-dasharray']).toBeDefined()
+  expect(scanAreaOutlineLayer.paint?.['line-dasharray']).toBeUndefined()
+  expect(scanAreaOutlineLayer.paint?.['line-width']).toBe(SCAN_AREA_LINE_WIDTH)
+  expect(SCAN_AREA_LINE_WIDTH).toBeGreaterThanOrEqual(1.5)
+  expect(SCAN_AREA_LINE_WIDTH).toBeLessThanOrEqual(2)
+})
+
+// Wypelnienie ma sygnalizowac obszar, a nie zamalowac wyniku: pod nim leza obrysy budynkow
+// i ortofoto, ktore uzytkownik przyszedl ogladac.
+it('keeps the scanned area fill light enough to read the buildings through it', () => {
+  expect(scanAreaFillLayer.paint?.['fill-opacity']).toBe(SCAN_AREA_FILL_OPACITY)
+  expect(SCAN_AREA_FILL_OPACITY).toBeGreaterThan(0)
+  expect(SCAN_AREA_FILL_OPACITY).toBeLessThan(Number(drawFillLayer.paint?.['fill-opacity']))
+})
+
+// Kolor akcentu stoi w jednej stalej; drugi hex rozjechalby sie przy pierwszej zmianie motywu.
+it('paints the scanned area with the accent colour from the shared constant', () => {
+  expect(scanAreaFillLayer.paint?.['fill-color']).toBe(SELECTED_COLOR)
+  expect(scanAreaOutlineLayer.paint?.['line-color']).toBe(SELECTED_COLOR)
+  for (const layer of SCAN_AREA_LAYERS) {
+    expect('source' in layer ? layer.source : undefined).toBe(SCAN_AREA_SOURCE_ID)
+    // Zrodlo jest wlasne (GeoJSON z `Bounds`), wiec warstwa nie ma `source-layer` z kafla.
+    expect('source-layer' in layer ? layer['source-layer'] : undefined).toBeUndefined()
   }
 })
 

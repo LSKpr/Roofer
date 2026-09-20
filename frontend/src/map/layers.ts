@@ -268,7 +268,58 @@ export const MAP_LAYERS: LayerSpecification[] = [
  * Klikalne sa tylko obrysy budynkow. Komorka siatki nie jest budynkiem i nie ma identyfikatora,
  * wiec klik w cieplo wyslalby do `/api/buildings/{id}` liczbe, ktora nic nie znaczy — albo nie
  * wyslalby nic i kasowal wybor. Warstwy podswietlenia tez nie sa klikalne: klik ma trafiac
- * w budynek pod spodem.
+ * w budynek pod spodem. Prostokat zeskanowanego obszaru tym bardziej: przykrywa cale zaznaczenie,
+ * wiec kazdy klik w mape trafialby w niego zamiast w budynek.
  */
 export const CLICKABLE_LAYER_IDS: string[] = [LAYER_IDS.fill]
 export const HIGHLIGHT_LAYER_IDS: string[] = [LAYER_IDS.selectedFill, LAYER_IDS.selectedOutline]
+
+/**
+ * Zeskanowany obszar — prostokat, ktorego dotycza liczby w panelu wyniku. Zrodlo jest wlasne
+ * (GeoJSON rysowany z `Bounds`, a nie kafel z backendu), a identyfikatory sa rozlaczne
+ * z `LAYER_IDS` i z `DRAW_LAYER_IDS` z rectangleDraw.ts: podglad w trakcie przeciagania
+ * i policzony obszar potrafia istniec na jednej mapie i nie moga sobie nadpisywac warstw.
+ */
+export const SCAN_AREA_SOURCE_ID = 'roofer-scan-area'
+
+export const SCAN_AREA_LAYER_IDS = {
+  fill: 'roofer-scan-area-fill',
+  outline: 'roofer-scan-area-outline',
+}
+
+/**
+ * Wypelnienie ledwie widoczne — prostokat ma przypominac, czego dotycza liczby, a nie zaslaniac
+ * tego, co w nim policzono: pod nim leza obrysy budynkow i (na podkladzie ortofoto) same dachy.
+ * Slabsze niz podglad rysowania (0,12), bo podglad zyje sekunde, a ten prostokat caly czas.
+ */
+export const SCAN_AREA_FILL_OPACITY = 0.06
+
+/**
+ * Linia ciagla, w odroznieniu od przerywanej ramki rysowania: przerywana mowi „trwa zaznaczanie",
+ * ciagla — „to jest obszar, ktorego dotycza liczby". Cienka (1,75 px wobec 2 px podgladu), bo ma
+ * byc tlem dla wyniku, a nie mocniejsza od obrysow zgloszonych budynkow.
+ */
+export const SCAN_AREA_LINE_WIDTH = 1.75
+
+export const scanAreaFillLayer: FillLayerSpecification = {
+  id: SCAN_AREA_LAYER_IDS.fill,
+  type: 'fill',
+  source: SCAN_AREA_SOURCE_ID,
+  paint: {
+    'fill-color': SELECTED_COLOR,
+    'fill-opacity': SCAN_AREA_FILL_OPACITY,
+  },
+}
+
+export const scanAreaOutlineLayer: LineLayerSpecification = {
+  id: SCAN_AREA_LAYER_IDS.outline,
+  type: 'line',
+  source: SCAN_AREA_SOURCE_ID,
+  paint: {
+    'line-color': SELECTED_COLOR,
+    'line-width': SCAN_AREA_LINE_WIDTH,
+  },
+}
+
+/** Kolejnosc dodawania: wypelnienie pod obrysem, oba nad warstwami budynkow. */
+export const SCAN_AREA_LAYERS: LayerSpecification[] = [scanAreaFillLayer, scanAreaOutlineLayer]

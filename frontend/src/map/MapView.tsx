@@ -1,13 +1,16 @@
 import { Map as MapLibreMap, NavigationControl, ScaleControl } from 'maplibre-gl'
+import type { GeoJSONSource } from 'maplibre-gl'
 import { useEffect, useRef } from 'react'
 import type { Bounds } from '../api/client'
-import { attachRectangleDraw, type RectangleDraw } from './rectangleDraw'
+import { attachRectangleDraw, rectanglePolygon, type RectangleDraw } from './rectangleDraw'
 import type { BasemapId } from './basemap'
 import { BASEMAPS, DEFAULT_BASEMAP, INITIAL_CENTER, INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM } from './basemap'
 import {
   CLICKABLE_LAYER_IDS,
   HIGHLIGHT_LAYER_IDS,
   MAP_LAYERS,
+  SCAN_AREA_LAYERS,
+  SCAN_AREA_SOURCE_ID,
   SOURCE_ID,
   buildingsSource,
   selectedFilter,
@@ -35,6 +38,12 @@ export type MapViewProps = {
   drawing?: boolean
   onDrawComplete?: (bounds: Bounds) => void
   onDrawCancel?: () => void
+  /**
+   * Obszar, ktorego dotyczy aktualny wynik skanu. Rysuje sie na mapie tak dlugo, jak dlugo rodzic
+   * go trzyma — takze wtedy, gdy panel wyniku ustapil karcie budynku albo gdy skan skonczyl sie
+   * bledem. `null` znaczy „nie ma czego pokazywac" i usuwa prostokat z mapy.
+   */
+  scannedArea?: Bounds | null
 }
 
 /** Filtr ustawiamy tylko na warstwach, ktore juz istnieja — powstaja dopiero po `style.load`. */
@@ -57,6 +66,35 @@ function addBuildingLayers(instance: MapLibreMap) {
   }
 }
 
+/**
+ * Prostokat zeskanowanego obszaru. Geometrie liczy `rectanglePolygon` z rectangleDraw.ts — ten sam
+ * pierscien, ktory widzi uzytkownik w trakcie przeciagania, wiec zaznaczenie i wynik nie moga sie
+ * rozjechac o piksel. Brak obszaru zdejmuje warstwy razem ze zrodlem, zamiast zostawiac je puste:
+ * pusta warstwa nadal odpowiadalaby na zapytania o styl i mieszala w kolejnosci rysowania.
+ *
+ * Wywolanie musi byc odporne na powtorzenie z tego samego powodu co warstwy budynkow: po `setStyle`
+ * mapa jest pusta i wszystko trzeba dolozyc od nowa.
+ */
+function applyScannedArea(instance: MapLibreMap, area: Bounds | null) {
+  if (!area) {
+    // Najpierw warstwy, potem zrodlo: MapLibre nie usunie zrodla, z ktorego ktos jeszcze czyta.
+    for (const layer of SCAN_AREA_LAYERS) {
+      if (instance.getLayer(layer.id)) instance.removeLayer(layer.id)
+    }
+    if (instance.getSource(SCAN_AREA_SOURCE_ID)) instance.removeSource(SCAN_AREA_SOURCE_ID)
+    return
+  }
+  const data = rectanglePolygon(area)
+  const source = instance.getSource<GeoJSONSource>(SCAN_AREA_SOURCE_ID)
+  // Istniejacemu zrodlu podmieniamy dane: usuwanie i dodawanie go przy kazdym nowym skanie
+  // zabieraloby ze soba warstwy i mrugaloby prostokatem.
+  if (source) source.setData(data)
+  else instance.addSource(SCAN_AREA_SOURCE_ID, { type: 'geojson', data })
+  for (const layer of SCAN_AREA_LAYERS) {
+    if (!instance.getLayer(layer.id)) instance.addLayer(layer)
+  }
+}
+
 export function MapView({
   selectedId = null,
   onSelect,
@@ -66,6 +104,7 @@ export function MapView({
   drawing = false,
   onDrawComplete,
   onDrawCancel,
+  scannedArea = null,
 }: MapViewProps) {
   const container = useRef<HTMLDivElement | null>(null)
   const map = useRef<MapLibreMap | null>(null)
@@ -76,6 +115,7 @@ export function MapView({
   const selectedRef = useRef(selectedId)
   const drawCompleteRef = useRef(onDrawComplete)
   const drawCancelRef = useRef(onDrawCancel)
+  const scannedAreaRef = useRef(scannedArea)
   const draw = useRef<RectangleDraw | null>(null)
   const styleReady = useRef(false)
   // Styl, ktory mapa juz dostala. Pierwszy dostaje przez konstruktor, wiec `setStyle` na starcie
@@ -89,6 +129,7 @@ export function MapView({
     selectedRef.current = selectedId
     drawCompleteRef.current = onDrawComplete
     drawCancelRef.current = onDrawCancel
+    scannedAreaRef.current = scannedArea
   })
 
   useEffect(() => {
@@ -111,6 +152,9 @@ export function MapView({
       // Wybor moze pochodzic z czasu przed zaladowaniem stylu (np. z adresu URL) albo przetrwac
       // zmiane podkladu, ktora zabrala warstwy podswietlenia razem ze starym stylem.
       applyHighlight(instance, selectedRef.current)
+      // Po warstwach budynkow, zeby prostokat zostal nad obrysami. Wynik skanu nie znika przez
+      // to, ze uzytkownik przelaczyl podklad, wiec jego obszar tez ma wrocic na mape.
+      applyScannedArea(instance, scannedAreaRef.current)
 
       // Handlery kursora zostaja przy mapie, nie przy stylu, wiec rejestrujemy je tylko raz —
       // po drugim `style.load` mielibysmy inaczej dwa zestawy tych samych nasluchow.
@@ -210,6 +254,17 @@ export function MapView({
     if (!instance || !styleReady.current) return
     applyHighlight(instance, selectedId)
   }, [selectedId])
+
+  /**
+   * Tak samo jak z podswietleniem: przed `style.load` nie ma do czego dokladac warstw, a obszar
+   * z tego czasu nadrabia handler stylu. Zycie prostokata jest w calosci decyzja rodzica —
+   * tutaj tylko odwzorowujemy prop na mapie.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady.current) return
+    applyScannedArea(instance, scannedArea)
+  }, [scannedArea])
 
   return <div ref={container} data-testid="map" className="h-full w-full" />
 }

@@ -5,6 +5,17 @@ import type { Building, Health } from './api/client'
 
 // Mapa jest zaslepiona: te testy sprawdzaja wiazanie stanu, a nie MapLibre (ktory nie ma w jsdom
 // WebGL i ma wlasne testy w src/map/MapView.test.tsx). Zaslepka wystawia sterowanie przez przyciski.
+type StubBounds = { ne: { lat: number; lng: number }; sw: { lat: number; lng: number } }
+
+const DRAWN: StubBounds = { ne: { lat: 51.26, lng: 21.1 }, sw: { lat: 51.24, lng: 21.06 } }
+/** Zapis prostokata w jednej linii — tyle wystarczy, zeby odroznic obszar od jego braku. */
+const DRAWN_LABEL = '21.06,51.24,21.1,51.26'
+
+function areaLabel(area: StubBounds | null | undefined): string {
+  if (!area) return 'brak'
+  return `${area.sw.lng},${area.sw.lat},${area.ne.lng},${area.ne.lat}`
+}
+
 vi.mock('./map/MapView', () => ({
   MapView: ({
     onSelect,
@@ -12,17 +23,20 @@ vi.mock('./map/MapView', () => ({
     onDrawComplete,
     basemap,
     drawing,
+    scannedArea,
   }: {
     onSelect?: (id: number | null) => void
     onZoomChange?: (zoom: number) => void
-    onDrawComplete?: (bounds: { ne: { lat: number; lng: number }; sw: { lat: number; lng: number } }) => void
+    onDrawComplete?: (bounds: StubBounds) => void
     basemap?: string
     drawing?: boolean
+    scannedArea?: StubBounds | null
   }) => (
     <div>
       {/* Propsy sterujace mapa wystawiamy jako tekst, zeby dalo sie je sprawdzic bez MapLibre. */}
       <span data-testid="map-basemap">{basemap}</span>
       <span data-testid="map-drawing">{drawing ? 'rysuje' : 'nie rysuje'}</span>
+      <span data-testid="map-scanned-area">{areaLabel(scannedArea)}</span>
       <button type="button" onClick={() => onSelect?.(42)}>
         wybierz budynek
       </button>
@@ -32,10 +46,7 @@ vi.mock('./map/MapView', () => ({
       <button type="button" onClick={() => onZoomChange?.(9)}>
         oddal
       </button>
-      <button
-        type="button"
-        onClick={() => onDrawComplete?.({ ne: { lat: 51.26, lng: 21.1 }, sw: { lat: 51.24, lng: 21.06 } })}
-      >
+      <button type="button" onClick={() => onDrawComplete?.(DRAWN)}>
         narysuj prostokat
       </button>
     </div>
@@ -178,6 +189,74 @@ it('opens the building card for a row picked in the scan result', async () => {
   fireEvent.click(await screen.findByText('Działka 142511_2.0012.2.2077/21'))
 
   expect(await screen.findByText(/141210_5\.0017\.105\/1/)).toBeDefined()
+})
+
+// Zaznaczony obszar ma byc widoczny caly czas: dopoki na ekranie jest wynik, na mapie jest
+// prostokat, ktorego ten wynik dotyczy.
+it('keeps the drawn rectangle on the map once the scan is done', async () => {
+  stubApi()
+
+  render(<App />)
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe('brak')
+  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+
+  expect(await screen.findByText('47%')).toBeDefined()
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe(DRAWN_LABEL)
+})
+
+it('drops the rectangle when the result panel is closed', async () => {
+  stubApi()
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  await screen.findByText('47%')
+
+  fireEvent.click(screen.getByLabelText('Zamknij'))
+
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe('brak')
+})
+
+// Karta budynku zastepuje panel skanu, ale nie uniewaznia wyniku — obszar zostaje na mapie.
+it('still shows the rectangle after the user opens a building from the list', async () => {
+  stubApi()
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  fireEvent.click(await screen.findByText('Działka 142511_2.0012.2.2077/21'))
+  await screen.findByText(/141210_5\.0017\.105\/1/)
+
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe(DRAWN_LABEL)
+})
+
+// Blad („obszar za duzy") jest wlasnie tym momentem, w ktorym uzytkownik musi zobaczyc,
+// co zaznaczyl, zeby poprawic zaznaczenie.
+it('keeps the rectangle visible when the scan fails', async () => {
+  stubApi({ scan: [400, { detail: 'Zaznaczony obszar jest za duży.' }] })
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+
+  expect(await screen.findByText(/za duży/)).toBeDefined()
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe(DRAWN_LABEL)
+})
+
+// Nowe zaznaczenie nie moze zostac obok starego: stary prostokat znika, zanim powstanie nowy.
+it('clears the old rectangle as soon as the user starts drawing again', async () => {
+  stubApi()
+
+  render(<App />)
+  fireEvent.click(screen.getByText('Zaznacz'))
+  fireEvent.click(screen.getByText('narysuj prostokat'))
+  await screen.findByText('47%')
+
+  fireEvent.click(screen.getByText('Zaznacz'))
+
+  expect(screen.getByTestId('map-drawing').textContent).toBe('rysuje')
+  expect(screen.getByTestId('map-scanned-area').textContent).toBe('brak')
 })
 
 it('always shows the legend, so the colours are never unexplained', async () => {

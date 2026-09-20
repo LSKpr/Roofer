@@ -1,14 +1,25 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
+import type { Bounds } from '../api/client'
 import { TILES_URL } from '../api/client'
 import { BASEMAPS, DEFAULT_BASEMAP, INITIAL_CENTER, INITIAL_ZOOM, basemapStyle } from './basemap'
-import { CLICKABLE_LAYER_IDS, HIGHLIGHT_LAYER_IDS, LAYER_IDS, SOURCE_ID, SOURCE_MAX_ZOOM } from './layers'
+import {
+  CLICKABLE_LAYER_IDS,
+  HIGHLIGHT_LAYER_IDS,
+  LAYER_IDS,
+  SCAN_AREA_LAYER_IDS,
+  SCAN_AREA_SOURCE_ID,
+  SOURCE_ID,
+  SOURCE_MAX_ZOOM,
+} from './layers'
 import { MapView } from './MapView'
 
 type MapEvent = { point: { x: number; y: number } }
 type Handler = (event: MapEvent) => void
 type Feature = { id: number | string; layer: { id: string } }
 type AddedLayer = { id: string; type: string }
+/** Tyle ze zrodla MapLibre, ile uzywa komponent: rodzaj, dane i podmiana danych w miejscu. */
+type SourceEntry = { type?: string; data?: unknown; setData?: (data: unknown) => void }
 
 const constructed: unknown[] = []
 const added: unknown[] = []
@@ -24,6 +35,39 @@ const canvasStyle = { cursor: '' }
 /** Co ma zwrocic queryRenderedFeatures dla kolejnego klikniecia. */
 let hits: Feature[] = []
 const ZOOM = 15
+/** Prostokat testowy; narozniki sa rozne w obu osiach, wiec zamiana lng z lat rzucalaby sie w oczy. */
+const AREA: Bounds = { ne: { lng: 21.1, lat: 51.26 }, sw: { lng: 21.06, lat: 51.24 } }
+const AREA_RING = [
+  [21.06, 51.24],
+  [21.1, 51.24],
+  [21.1, 51.26],
+  [21.06, 51.26],
+  [21.06, 51.24],
+]
+
+/**
+ * Zrodlo GeoJSON w atrapie naprawde trzyma dane: `setData` nadpisuje `data`, tak jak w MapLibre.
+ * Atrapa, ktora tylko przyjmuje wywolanie, nie odroznilaby ustawionej geometrii od jej braku.
+ * Zrodla kaflowe zostaja takie, jakie przyszly — nie maja `setData`.
+ */
+function sourceEntry(spec: unknown): unknown {
+  const entry: SourceEntry = { ...(spec as SourceEntry) }
+  if (entry.type !== 'geojson') return spec
+  entry.setData = (data: unknown) => {
+    entry.data = data
+  }
+  return entry
+}
+
+/** Dane, ktore zrodlo ma teraz — po dodaniu albo po ostatnim `setData`. */
+function sourceData(id: string): unknown {
+  const entry = sources.find(([sourceId]) => sourceId === id)?.[1] as SourceEntry | undefined
+  return entry?.data
+}
+
+function layerIds(): string[] {
+  return addedLayers.map((layer) => layer.id)
+}
 
 // jsdom nie ma WebGL, wiec cala MapLibre jest podmieniona; mock zapisuje, co komponent zrobil z mapa.
 vi.mock('maplibre-gl', () => ({
@@ -49,7 +93,7 @@ vi.mock('maplibre-gl', () => ({
       if (index >= 0) handlers.splice(index, 1)
     }
     addSource(id: string, spec: unknown) {
-      sources.push([id, spec])
+      sources.push([id, sourceEntry(spec)])
     }
     removeSource(id: string) {
       const index = sources.findIndex(([sourceId]) => sourceId === id)
@@ -286,6 +330,100 @@ it('binds the cursor handlers once, not on every style load', () => {
 
   const enters = handlers.filter((entry) => entry.type === 'mouseenter' && entry.layer === LAYER_IDS.fill)
   expect(enters).toHaveLength(1)
+})
+
+// Zeskanowany obszar jest stanem aplikacji, nie interakcji z myszka: rysuje go prop, wiec prostokat
+// zostaje na mapie po puszczeniu przycisku, kiedy przerywana ramka podgladu juz znikla.
+it('draws the scanned rectangle from its own source, above the buildings', () => {
+  render(<MapView scannedArea={AREA} />)
+  fire('style.load')
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID, SCAN_AREA_SOURCE_ID])
+  expect(sourceData(SCAN_AREA_SOURCE_ID)).toEqual({
+    type: 'Feature',
+    properties: {},
+    geometry: { type: 'Polygon', coordinates: [AREA_RING] },
+  })
+  // Nad warstwami budynkow: MapLibre rysuje w kolejnosci dodawania, a obrys obszaru ma byc widoczny.
+  expect(layerIds()).toEqual([...Object.values(LAYER_IDS), ...Object.values(SCAN_AREA_LAYER_IDS)])
+})
+
+it('draws a rectangle that arrives after the style has loaded', () => {
+  const view = render(<MapView />)
+  fire('style.load')
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+
+  view.rerender(<MapView scannedArea={AREA} />)
+
+  expect(sourceData(SCAN_AREA_SOURCE_ID)).toMatchObject({ geometry: { coordinates: [AREA_RING] } })
+  expect(layerIds()).toContain(SCAN_AREA_LAYER_IDS.outline)
+})
+
+// Nowy skan przesuwa ten sam prostokat. Usuwanie i dodawanie zrodla zabieraloby ze soba warstwy.
+it('moves the rectangle to the new area without duplicating the source or the layers', () => {
+  const view = render(<MapView scannedArea={AREA} />)
+  fire('style.load')
+
+  const next: Bounds = { ne: { lng: 20.5, lat: 52.3 }, sw: { lng: 20.4, lat: 52.2 } }
+  view.rerender(<MapView scannedArea={next} />)
+
+  expect(sourceData(SCAN_AREA_SOURCE_ID)).toMatchObject({
+    geometry: {
+      coordinates: [
+        [
+          [20.4, 52.2],
+          [20.5, 52.2],
+          [20.5, 52.3],
+          [20.4, 52.3],
+          [20.4, 52.2],
+        ],
+      ],
+    },
+  })
+  expect(sources.filter(([id]) => id === SCAN_AREA_SOURCE_ID)).toHaveLength(1)
+  expect(layerIds().filter((id) => id === SCAN_AREA_LAYER_IDS.fill)).toHaveLength(1)
+})
+
+// Zamkniecie panelu wyniku ma zdjac prostokat z mapy, a nie zostawic pustej warstwy.
+it('takes the rectangle off the map when the area goes back to null', () => {
+  const view = render(<MapView scannedArea={AREA} />)
+  fire('style.load')
+
+  view.rerender(<MapView scannedArea={null} />)
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID])
+  expect(layerIds()).toEqual(Object.values(LAYER_IDS))
+})
+
+// `setStyle` zabiera wszystko dodane recznie. Wynik skanu przezywa zmiane podkladu, wiec jego
+// obszar tez musi wrocic — razem z geometria, nie jako pusta warstwa.
+it('brings the scanned rectangle back after a basemap swap', () => {
+  const view = render(<MapView scannedArea={AREA} basemap="standard" />)
+  fire('style.load')
+
+  view.rerender(<MapView scannedArea={AREA} basemap="orthophoto" />)
+  expect(sources).toHaveLength(0)
+  expect(addedLayers).toHaveLength(0)
+
+  fire('style.load')
+
+  expect(sources.map(([id]) => id)).toEqual([SOURCE_ID, SCAN_AREA_SOURCE_ID])
+  expect(sourceData(SCAN_AREA_SOURCE_ID)).toMatchObject({ geometry: { coordinates: [AREA_RING] } })
+  expect(layerIds()).toEqual([...Object.values(LAYER_IDS), ...Object.values(SCAN_AREA_LAYER_IDS)])
+})
+
+// Prostokat przykrywa cale zaznaczenie, wiec gdyby byl klikalny, kazdy klik w obszar udawalby
+// klik w budynek — i karta budynku otwieralaby sie dla niewlasciwego obiektu albo dla zadnego.
+it('never lets a click on the scanned area pass as a click on a building', () => {
+  const onSelect = vi.fn()
+  render(<MapView scannedArea={AREA} onSelect={onSelect} />)
+  fire('style.load')
+  fire('click')
+
+  expect(queries[0][1]).toEqual({ layers: [LAYER_IDS.fill] })
+  expect(CLICKABLE_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.fill)
+  expect(CLICKABLE_LAYER_IDS).not.toContain(SCAN_AREA_LAYER_IDS.outline)
+  expect(onSelect).toHaveBeenCalledWith(null)
 })
 
 it('ignores a basemap prop that is already applied', () => {
