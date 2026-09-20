@@ -281,6 +281,48 @@ to samo, innymi słowami: że model porównuje wygląd pokrycia na zdjęciu sate
 „właściciel zataił" — i wprost, że to jest **lista do sprawdzenia w terenie, nie lista ustaleń**.
 Zdania nie znikają, gdy lista jest pusta, bo dotyczą sekcji, nie wierszy.
 
+### Dwie wsie w wycinkach GUGiK 5 cm (2026-09-20)
+
+Autor modelu wyeksportował **801 wycinków dachów z ortofotomapy GUGiK przy 5 cm na piksel** dla dwóch
+całych wsi. Leżą **poza repozytorium**, w `C:\Users\kacpe\Desktop\HackMIT\villages\` (70 MB PNG-ów
+w historii gita byłoby pomyłką bez odwrotu); źródło na serwerze:
+`/home/student/MODELS/model_final_with_64_128_gugik/Data/{miasteczko1,miasteczko2}`.
+
+| katalog | wieś | zdjęć | w rejestrze | poza rejestrem | środek |
+|---|---|---:|---:|---:|---|
+| `miasteczko1` | Janików | 372 | 79 | 293 | 21,589 / 51,572 |
+| `miasteczko2` | Bieganów | 429 | 73 | 356 | 20,489 / 52,046 |
+
+Dlaczego to jest cenne, a nie tylko duże:
+
+- **Pliki nazywają się `osm_<osm_id>_<hash>.png`, a `source_id` w `metadata.csv` to dokładnie nasz
+  `osm_id`.** Sprawdzone: wszystkie 801 identyfikatorów istnieje w naszym PostGIS, 152 z nich są
+  w rejestrze GeoAzbest. Czyli to gotowa podmianka dla `/api/buildings/{osm_id}/roof.png`, bez
+  żadnego dopasowywania geometrii.
+- **5 cm na piksel** wobec 25 cm z WMS-a StandardResolution, którego używamy dziś.
+- `metadata.csv` ma **datę nalotu** (2023-12-05 i 2023-12-12), numer arkusza, rodzimą rozdzielczość
+  i miary jakości kadru. Nasza karta mówi dziś „stan z momentu nalotu" nie wiedząc, z którego —
+  z tych danych może podać datę.
+- Sumy kontrolne SHA-256 z `metadata.csv` zgadzają się po transferze; `image_bytes` też.
+
+**Zastrzeżenie, bez którego te kadry wprowadzają w błąd:** kadr ma stałe **12,8 × 12,8 m** (256 px
+przy 5 cm), więc dach dłuższy niż 13 m jest przycięty. Do oceny tekstury pokrycia to nie wada, ale
+podpis musi to powiedzieć — inaczej ktoś odczyta z obrazka, że budynek jest mniejszy, niż jest.
+Nasz własny wycinek z WMS-a liczy kwadrat z marginesem wokół całego budynku, więc te dwa kadry
+**nie są tym samym** i nie wolno ich mieszać bez powiedzenia, który jest który.
+
+Wsie mają też `boundary.geojson` (granica z relacji OSM) i `buildings.geojson` (wszystkie budynki
+w granicy, także te bez zdjęcia). Pominięte kadry mają jeden powód: `NO_GUGIK_6CM_COVERAGE` — 86
+w Janikowie i 120 w Bieganowie, czyli **brak pokrycia 6 cm nie znaczy, że dachu nie ma**.
+
+**Trop wart osobnej rozmowy:** katalog nazywa się `model_final_with_64_128_gugik`, a w środku jest
+`GUGiK_Data/roof_dataset_gugik_2000_2000` z podziałem `asbestos` / `non_asbestos`. Autor trenuje
+wersję modelu **na ortofoto GUGiK**, nie na Google. Gdyby ją dostać, zniknąłby największy szew, jaki
+mamy: dziś model ocenia kadr Google z zoomu 20, a użytkownik patrzy na GUGiK, i każda nota musi to
+uczciwie przyznawać. Przy modelu na GUGiK oba patrzyłyby na to samo, a przy okazji odpadłby problem
+z warunkami korzystania z kafli Google. Artefakty są na serwerze podlinkowane do `/tmp` i nie ma przy
+nich usługi HTTP, więc to nie jest praca na pięć minut.
+
 ### Demo przy słabej sieci
 
 Aplikacja ciągnie z internetu trzy rzeczy i **żadnej z nich nie wolno pobrać hurtem**:
