@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+# Runtime state and credentials
+fastapi_backend/data/
+fastapi_backend/runtime/
+*.log
+
+# Large source datasets and generated training outputs
+Data/*.geojson
+Data/roof_dataset_*/
+GUGiK_Data/
+GUGiK_Data_256/
+MODELS/
+artifacts/
+
+# Local backups and working copies
+DO_NOT_TOUCH_DO_NOT_DELTE/
+COPY_FRONT_ALL/
+COPY_FRONT_ALL_guigik/
+other/

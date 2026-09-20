@@ -1,0 +1,7 @@
+-r ../Data/requirements-dataset.txt
+numpy==2.2.6
+torch==2.8.0
+onnx==1.19.0
+onnxruntime==1.23.2
+scikit-learn==1.7.2
+matplotlib==3.10.7
