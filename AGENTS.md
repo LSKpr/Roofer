@@ -166,6 +166,66 @@ W interfejsie atrapa ma nad werdyktem napis „Wynik demonstracyjny · model nie
 liczbę; drugi test pilnuje, że przy `source: "model"` tego ostrzeżenia **nie ma** — inaczej prawdziwy
 wynik wyglądałby na podrobiony.
 
+### Model lokalnie (2026-09-20, obecna konfiguracja)
+
+Usługa modelu chodzi **u nas**, nie na cudzym serwerze: `http://127.0.0.1:8020`. To kopia kodu
+autora uruchomiona bez zmian — nie przepisywaliśmy modelu ani preprocessingu, bo „prawie takie samo"
+centrowanie kadru albo inna normalizacja dałyby liczby wyglądające jak jego wyniki, a nimi nie
+będące. `model_id` po obu stronach jest identyczny (`70b702e1…`), i to jest dowód, że liczymy tym
+samym modelem.
+
+Powody były dostępnościowe, nie jakościowe: zdalna instancja wymagała tunelu SSH (jej publiczny port
+blokuje Security Group), miała zniknąć 20.09.2026 o 18:20 UTC, i raz już przestała działać w środku
+pracy — autor przeniósł katalog, a proces uvicorna został ze starą ścieżką i zaczął zwracać 500.
+
+Gdzie co leży (**poza repozytorium**, bo model waży 209 MB, a baza 590 MB):
+
+```text
+C:\Users\kacpe\Desktop\HackMIT\ml-service\COPY_FRONT_ALL\
+  fastapi_backend\        usluga (FastAPI), .venv obok, token w runtime\api-token
+  artifacts\...\model.onnx    209 MB, ONNX na CPU
+  Data\build_roof_dataset.py  wspolny preprocessing — usluga go importuje
+```
+
+Uruchomienie (Python 3.11 wystarcza, autor testował 3.13):
+
+```bash
+cd /c/Users/kacpe/Desktop/HackMIT/ml-service/COPY_FRONT_ALL
+./.venv/Scripts/python.exe -m unittest discover -s fastapi_backend/tests   # 16 testow autora
+./.venv/Scripts/python.exe -m fastapi_backend.manage create-token          # raz, nie nadpisuje
+ROOFER_REQUESTS_PER_MINUTE=120 ./.venv/Scripts/python.exe -m uvicorn \
+  fastapi_backend.app:app --host 127.0.0.1 --port 8020 --workers 1 --no-proxy-headers
+```
+
+Port 8020, bo 8001 zajmuje nasz backend, a 8010 był tunelem. Token trafia do naszego `.env`
+(`PREDICTION_API_TOKEN`), którego nie ma w repozytorium.
+
+**Co zyskaliśmy poza niezależnością.** Limity tamtej instancji były jej zmiennymi środowiskowymi, nie
+własnościami modelu: `ROOFER_REQUESTS_PER_MINUTE` podnieśliśmy z 10 na 120, więc odstęp między
+zapytaniami w naszym dostawcy (`PREDICTION_MIN_INTERVAL_S`) spadł z 6 s na 0,5 s — klikanie w kolejne
+budynki nie czeka już sekund na ogranicznik. Limity 100 budynków i 4 km² **zostały bez zmian**, bo
+nasza bramka (`MODEL_MAX_BUILDINGS`, `MODEL_MAX_AREA_KM2` w `app/prediction.py`) je odwzorowuje;
+podniesienie ich wymaga zmiany w obu miejscach naraz, inaczej bramka blokuje zapytania, które by
+przeszły.
+
+Pomiary z tego samego prostokąta pod Zwoleniem (76 budynków):
+
+| | zdalnie przez tunel | lokalnie |
+|---|---:|---:|
+| `/v1/analyze` | 2,3 s | **4,8 s** (zimny cache kafli) |
+| przez nasz `/api/area/analyze` | 2,3 s | **3,1 s** |
+| wynik | 66 ocenionych, 17 z flagą | **identyczny** |
+
+Lokalnie jest wolniej, bo kafle Google idą przez łącze domowe, a nie przez AWS. I to jest druga
+rzecz, o której trzeba wiedzieć: model patrzy na **kafle Google Satellite** (zoom 20), a autor sam
+pisze, że korzystanie z nich musi być zgodne z warunkami dostawcy. Postawienie usługi u siebie nie
+tworzy tego problemu, ale **przenosi go na nas**. Podmiana na ortofoto GUGiK nie jest przełącznikiem:
+model trenowano na Google, więc na innym źródle jego skuteczność zmieni się w nieznany sposób.
+
+Przełączenie z powrotem na zdalną instancję (albo na cokolwiek innego) to zmiana `PREDICTION_API_URL`
+i tokenu w `.env`. Ani jedna linia naszego kodu nie wie, gdzie stoi model — po to było gniazdo
+dostawcy w `app/prediction.py`.
+
 ### Analiza całego zaznaczonego obszaru
 
 `POST /api/area/analyze` przepuszcza prostokąt przez model jednym żądaniem i zestawia jego ocenę

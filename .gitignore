@@ -14,6 +14,13 @@ __pycache__/
 
 pgdata/
 
+# Logi procesow developerskich (backend, dev server, lokalny model).
+.run/
+
+# Paczki z danymi albo z modelem trafiaja tu recznie i wazą setki megabajtow. Jawna regula, bo
+# `git add .` z 477 MB archiwum w drzewie to pomylka, ktorej nie da sie potem wyciac z historii.
+*.zip
+
 Additional_data/*.geojson/
 Additional_data/*.geojson.gz
 Additional_data/*.gpkg.zip
