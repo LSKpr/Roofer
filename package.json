@@ -10,6 +10,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
     "lint": "eslint .",
     "dev:backend": "pnpm --filter @roofer/backend dev",
     "dev:frontend": "pnpm --filter @roofer/frontend dev",

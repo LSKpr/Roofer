@@ -11,9 +11,30 @@ The packages are scaffolding; their `src/index.ts` files are empty on purpose.
 
 - Install: `pnpm install`
 - Build every package: `pnpm build`
-- Type check: `pnpm typecheck`
+- Type check (source and tests): `pnpm typecheck`
+- Run tests: `pnpm test`
 - Lint: `pnpm lint`
-- Database: `pnpm db:up` / `pnpm db:down` (MySQL on `localhost:3306`, user/password/db all `roofer`)
+- Database: `pnpm docker:up` / `pnpm docker:down` (MySQL on `localhost:3306`, user/password/db all `roofer`)
+
+Write tests as you go and keep the units under test small and directly checkable; that is an
+explicit instruction from the project owner, not a style preference.
+
+## Testing
+
+The runner is Node's built-in `node:test` with `node:assert/strict`. There is no Vitest or Jest.
+Tests live in `packages/<pkg>/tests/**/*.test.ts(x)` and are run through the `tsx` CLI.
+
+- `node:test` cannot transform JSX and has no DOM. React component tests work only because
+  `tsx --tsconfig tsconfig.test.json` supplies the JSX transform and `tests/setup.ts` installs a
+  jsdom window onto `globalThis`. Do not drop either.
+- Each package has a `tsconfig.test.json` because the build config sets `rootDir: src` and would
+  refuse to see `tests/`. `typecheck` runs against the test config, so type errors in tests fail
+  the build. Verified by planting a deliberate error.
+- pnpm runs scripts through `cmd.exe` on Windows, so `VAR=value cmd` in a `scripts` entry does not
+  work. Pass configuration as a CLI flag instead of an environment variable.
+- jsdom 30 ships no type declarations; `@types/jsdom` is a separate dependency.
+- For backend HTTP tests, start the Express app on an ephemeral port and use the global `fetch`.
+  Do not add supertest.
 
 Version constraints found by running the toolchain, not by guessing:
 

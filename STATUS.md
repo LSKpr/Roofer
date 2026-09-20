@@ -5,6 +5,7 @@ Stan realizacji faz z `PROJECT.md` §10. Prompty startowe: `PHASES.md`.
 | Faza | Zakres | Status | Data | Notatka |
 | --- | --- | --- | --- | --- |
 | F0 | Fundament monorepo + MySQL | gotowe | 2026-09-20 | `pnpm install/build/typecheck/lint` przechodza po skasowaniu `node_modules`; MySQL 8.4.11 healthy. |
+| — | Setup testow (`node:test`) | gotowe | 2026-09-20 | `pnpm test` uruchamia 3 paczki; typecheck i lint obejmuja pliki testowe. |
 | F1 | Schema Prisma, OpenAPI, Zod, klient | nie zaczete | — | — |
 | F2 | Szkielet backendu i middleware | nie zaczete | — | — |
 | F3 | Mock `/bbox` + mapa Leaflet | nie zaczete | — | — |
@@ -29,11 +30,15 @@ Zatwierdzone przez wlasciciela projektu 2026-09-20:
 - **TypeScript 6.0.3, nie 7.0.2.** TS 7 buduje i typecheckuje poprawnie, ale typescript-eslint 8.70
   odmawia zaladowania przeciw API TS 7, co zostawiloby repo bez lintu.
 - **Node 22.14 zamiast 20.** Wersja zainstalowana lokalnie; `engines` dopuszcza `>=20`.
+- **Dodany framework testowy.** PROJECT.md §3 zadnego nie wymienia. Wybrane `node:test` (wbudowane)
+  plus `tsx`, `jsdom` i `@testing-library/react` do komponentow. Zakres: unit + API + komponenty.
 
 ## Dlugi techniczne
 
-- **Brak frameworka testowego.** PROJECT.md §3 go nie wymienia, a F0 nie ma logiki do testowania.
-  Do ustalenia przed F1.
+- **`packages/database` bez testow.** Bedzie trzymac schemat i reeksport klienta Prismy, wiec nie
+  ma tam czystych funkcji do testowania. Dodac dopiero, gdy pojawi sie logika.
+- **Testy sa na razie smoke'owe.** Sprawdzaja, ze runner dziala, bo F0 nie ma logiki domenowej.
+  Prawdziwe przypadki wchodza od F1.
 - **Puste `src/index.ts`** w `database`, `validation` i `backend` — scaffolding F0, wypelnia sie w F1/F2.
 - **Stary stack w `legacy/`** (FastAPI + PostGIS + MapLibre) nie jest czescia nowej aplikacji.
   Zostaje, bo narzedzia do wycinania dachow i budowy datasetu nie maja odpowiednika w nowym planie.
