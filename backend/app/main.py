@@ -17,6 +17,11 @@ async def close_http_clients(app: FastAPI) -> None:
     geocoder = getattr(app.state, "geocoder", None)
     if geocoder is not None:
         await geocoder.close()
+    # Dostawca oceny pokrycia ma klienta tylko wtedy, gdy jest nim HttpModelProvider.
+    provider = getattr(app.state, "roof_provider", None)
+    close = getattr(provider, "close", None)
+    if close is not None:
+        await close()
 
 
 @asynccontextmanager

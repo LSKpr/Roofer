@@ -31,10 +31,14 @@ Model, gdy sie pojawi, ocenia **wyglad pokrycia** (faliste, szare plyty typowe d
 a nie obecnosc azbestu w materiale — i tak musza brzmiec wszystkie komunikaty w tym pliku.
 """
 
+import asyncio
 import hashlib
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
+
+import httpx
 
 Source = Literal["mock", "model", "unavailable"]
 Verdict = Literal["suspected", "unlikely", "unknown"]
@@ -73,32 +77,35 @@ FROM osm_buildings b
 WHERE b.osm_id = %(id)s::text
 """
 
+# Noty sa tekstem, ktory czyta urzednik w karcie budynku, wiec pisane sa poprawna polszczyzna
+# z diakrytykami. Zasada „bez znakow diakrytycznych" dotyczy komentarzy i identyfikatorow w kodzie,
+# a nie komunikatow — te bez ogonkow wygladaly w interfejsie na usterke.
 MOCK_SUSPECTED_NOTE = (
-    "Wynik demonstracyjny, bez modelu ML — liczba pochodzi ze skrotu identyfikatora budynku, "
-    "nie ze zdjecia. Docelowy model rozpoznaje faliste, szare pokrycie typowe dla eternitu, "
-    "a nie obecnosc azbestu w dachu."
+    "Wynik demonstracyjny, bez modelu ML — liczba pochodzi ze skrótu identyfikatora budynku, "
+    "nie ze zdjęcia. Docelowy model rozpoznaje faliste, szare pokrycie typowe dla eternitu, "
+    "a nie obecność azbestu w dachu."
 )
 
 MOCK_UNLIKELY_NOTE = (
-    "Wynik demonstracyjny, bez modelu ML — liczba pochodzi ze skrotu identyfikatora budynku, "
-    "nie ze zdjecia. Niska ocena niczego nie dowodzi: docelowy model patrzy tylko na to, czy "
-    "pokrycie wyglada na faliste i szare jak eternit."
+    "Wynik demonstracyjny, bez modelu ML — liczba pochodzi ze skrótu identyfikatora budynku, "
+    "nie ze zdjęcia. Niska ocena niczego nie dowodzi: docelowy model patrzy tylko na to, czy "
+    "pokrycie wygląda na faliste i szare jak eternit."
 )
 
 MOCK_UNKNOWN_NOTE = (
     "Wynik demonstracyjny, bez modelu ML — dla tego budynku atrapa nie oddaje oceny, tak jak "
-    "docelowy model przy braku zdjecia okolicy. Brak oceny to nie to samo co ocena zero."
+    "docelowy model przy braku zdjęcia okolicy. Brak oceny to nie to samo co ocena zero."
 )
 
 UNAVAILABLE_NOTE = (
-    "Ocena pokrycia dachu nie jest skonfigurowana, wiec nie ma zadnego wyniku — a brak wyniku to "
-    "nie to samo co ocena zero. Model, gdy sie pojawi, bedzie rozpoznawal faliste, szare pokrycie "
-    "typowe dla eternitu, a nie obecnosc azbestu."
+    "Ocena pokrycia dachu nie jest skonfigurowana, więc nie ma żadnego wyniku — a brak wyniku to "
+    "nie to samo co ocena zero. Model, gdy się pojawi, będzie rozpoznawał faliste, szare pokrycie "
+    "typowe dla eternitu, a nie obecność azbestu."
 )
 
 PROVIDER_ERROR_NOTE = (
-    "Serwis oceny pokrycia dachu nie odpowiedzial, wiec nie ma wyniku — brak wyniku to nie to "
-    "samo co ocena zero. Sprobuj ponownie za chwile."
+    "Serwis oceny pokrycia dachu nie odpowiedział, więc nie ma wyniku — brak wyniku to nie to "
+    "samo co ocena zero. Spróbuj ponownie za chwilę."
 )
 
 
@@ -252,19 +259,241 @@ class UnavailableProvider:
         return unavailable_analysis()
 
 
-# Nazwy z konfiguracji (`prediction_provider`) na klasy dostawcow. Dostawce HTTP dopisze sie tu
-# jedna linia, gdy kontrakt API bedzie znany.
-PROVIDERS: dict[str, type] = {"mock": MockProvider, "none": UnavailableProvider}
+ANALYZE_PATH = "/v1/analyze"
+
+# Statusy zwracane przez API modelu. Tylko `ok` niesie liczbe; reszta to jawne „nie wiemy",
+# i wlasnie dlatego ten model da sie podlaczyc bez lamania naszej zasady, ze brak wyniku to None.
+MODEL_STATUS_OK = "ok"
+
+STATUS_NOTES = {
+    "low_quality": "zdjęcie nie przeszło kontroli jakości",
+    "imagery_error": "nie udało się pobrać zdjęcia okolicy",
+    "geometry_error": "nie udało się wyznaczyć punktu wewnątrz dachu",
+}
+
+# Model patrzy na INNE zdjecie niz to, ktore uzytkownik widzi w karcie: on na Google Satellite
+# z zoomu 20, my pokazujemy ortofotomape GUGiK. Bez tego zdania ktos porownalby ocene z kadrem
+# obok i wyciagnal wniosek z dwoch roznych zrodel. Skutecznosc podana przez autora modelu.
+MODEL_IMAGERY_NOTE = (
+    "Ocena z jednego zdjęcia satelitarnego Google (zoom 20), a nie z ortofotomapy GUGiK pokazanej "
+    "w tej karcie — model i zdjęcie obok to dwa różne źródła. Model rozpoznaje wygląd pokrycia, "
+    "nie materiał: autor podaje skuteczność 77% i wykrywalność azbestu 63%, więc wynik jest "
+    "wskazówką do oględzin, a nie rozstrzygnięciem."
+)
+
+MODEL_NO_RESULT_NOTE = (
+    "Model nie ocenił tego dachu ({powod}), więc nie ma wyniku — a brak wyniku to nie to samo "
+    "co ocena zero. Reszta karty pozostaje aktualna."
+)
+
+MODEL_MISSING_NOTE = (
+    "Serwis oceny nie zwrócił tego budynku, więc nie ma wyniku. Brak wyniku to nie to samo co ocena zero."
+)
+
+MODEL_BUSY_NOTE = (
+    "Serwis oceny jest zajęty i poprosił o przerwę ({seconds} s), więc nie ma teraz wyniku. "
+    "Spróbuj ponownie za chwilę — brak wyniku to nie to samo co ocena zero."
+)
+
+
+def analyze_request(building: BuildingShape) -> dict[str, dict[str, float]]:
+    """Cialo zapytania: prostokat budynku w WGS84, naroznik SW i NE — tak jak chce API modelu."""
+    west, south, east, north = building.bbox
+    return {
+        "south_west": {"longitude": west, "latitude": south},
+        "north_east": {"longitude": east, "latitude": north},
+    }
+
+
+def find_feature(payload: dict[str, Any], osm_id: int) -> dict[str, Any] | None:
+    """Nasz budynek w odpowiedzi, po `source_id`.
+
+    Dopasowujemy po identyfikatorze OSM, a nie geometrycznie, bo serwis korzysta z tego samego
+    snapshotu co my (2 585 219 budynkow, sprawdzone w jego /health) i sam oddaje `source_id`.
+    To jest dokladniejsze niz liczenie przekrycia: w prostokacie jednego budynku siedza tez
+    sasiednie dachy — przy pierwszym zapytaniu na zywo obok bloku wyszedl garaz sasiada.
+    `building_id` i `id` sa ich wewnetrznymi kluczami i nie wolno ich do tego uzywac.
+    """
+    wanted = str(osm_id)
+    for feature in payload.get("features") or []:
+        properties = feature.get("properties") or {}
+        if str(properties.get("source_id")) == wanted:
+            return properties
+    return None
+
+
+def analysis_from_properties(properties: dict[str, Any], model_id: str | None) -> RoofAnalysis:
+    """Wlasciwosci obiektu z API modelu na nasza ocene.
+
+    Brak `model_id` konczy sie „nie wiemy", a nie wynikiem bez nazwy modelu: `RoofAnalysis` wymaga
+    nazwy przy `source="model"`, a wymyslenie jej byloby podaniem atrapy za model.
+    """
+    if not model_id:
+        return unavailable_analysis(MODEL_MISSING_NOTE)
+
+    status = str(properties.get("status") or "")
+    probability = properties.get("asbestos_probability")
+    if status != MODEL_STATUS_OK or probability is None:
+        reasons = properties.get("reasons") or []
+        detail = ", ".join(str(reason) for reason in reasons) if reasons else STATUS_NOTES.get(status, status or "brak")
+        return RoofAnalysis(
+            source="model",
+            verdict="unknown",
+            probability=None,
+            model_name=model_id,
+            note=MODEL_NO_RESULT_NOTE.format(powod=detail) + " " + MODEL_IMAGERY_NOTE,
+        )
+
+    value = round(float(probability), 4)
+    return RoofAnalysis(
+        source="model",
+        verdict="suspected" if value >= SUSPECTED_THRESHOLD else "unlikely",
+        probability=value,
+        model_name=model_id,
+        note=MODEL_IMAGERY_NOTE,
+    )
+
+
+class HttpModelProvider:
+    """Ocena z zewnetrznego API modelu (`POST /v1/analyze`).
+
+    Trzy ograniczenia tamtej instancji wymuszaja ksztalt tej klasy: **10 zapytan na minute**,
+    **jedno naraz** i kilka sekund na odpowiedz. Karta budynku pyta o ocene przy kazdym
+    kliknieciu, wiec bez cache'u i ogranicznika jedenaste klikniecie w minucie dostaloby 429.
+    Cache trzyma wynik po `osm_id`: ocena tego samego dachu z tego samego zdjecia sie nie zmienia,
+    wiec pamietanie jej niczego nie falszuje.
+
+    Token nie trafia nigdzie poza naglowek zadania — nie ma go w notach, bledach ani w `repr`.
+    """
+
+    source: Source = "model"
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout_s: float = 60.0,
+        cache_ttl_s: float = 3600.0,
+        min_interval_s: float = 6.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._token = token
+        self.timeout_s = timeout_s
+        self.cache_ttl_s = cache_ttl_s
+        self.min_interval_s = min_interval_s
+        self._transport = transport
+        self._clock = clock
+        self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
+        # Jedno zapytanie naraz, bo tamta instancja i tak odrzuca rownolegle (429 BUSY).
+        self._request_lock = asyncio.Lock()
+        self._next_allowed_s = 0.0
+        self._cache: dict[int, tuple[float, RoofAnalysis]] = {}
+
+    def __repr__(self) -> str:  # token nie ma prawa wyciec do logu ani do tracebacku
+        return f"HttpModelProvider(base_url={self.base_url!r})"
+
+    async def client(self) -> httpx.AsyncClient:
+        if self._client is not None:
+            return self._client
+        async with self._client_lock:
+            if self._client is None:
+                self._client = httpx.AsyncClient(
+                    timeout=self.timeout_s,
+                    headers={"Authorization": f"Bearer {self._token}", "Accept": "application/json"},
+                    transport=self._transport,
+                )
+        return self._client
+
+    async def close(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
+
+    def cached(self, osm_id: int) -> RoofAnalysis | None:
+        entry = self._cache.get(osm_id)
+        if entry is None:
+            return None
+        expires_at, analysis = entry
+        if expires_at <= self._clock():
+            del self._cache[osm_id]
+            return None
+        return analysis
+
+    async def analyze(self, building: BuildingShape) -> RoofAnalysis:
+        hit = self.cached(building.id)
+        if hit is not None:
+            return hit
+
+        try:
+            response = await self._post(analyze_request(building))
+        except httpx.HTTPError:
+            # Padniety serwis nie moze zabrac karty budynku ani udawac wyniku.
+            return unavailable_analysis(PROVIDER_ERROR_NOTE)
+
+        if response.status_code == 429:
+            return unavailable_analysis(MODEL_BUSY_NOTE.format(seconds=response.headers.get("Retry-After", "kilka")))
+        if response.status_code != 200:
+            return unavailable_analysis(PROVIDER_ERROR_NOTE)
+
+        try:
+            payload = response.json()
+        except ValueError:
+            return unavailable_analysis(PROVIDER_ERROR_NOTE)
+
+        properties = find_feature(payload, building.id)
+        if properties is None:
+            return unavailable_analysis(MODEL_MISSING_NOTE)
+
+        model_id = (payload.get("meta") or {}).get("model_id")
+        analysis = analysis_from_properties(properties, model_id)
+        # Zapamietujemy takze „nie wiemy" od modelu: powtorne pytanie dostaloby ten sam werdykt,
+        # a limit 10 zapytan na minute jest wspolny dla calej instancji.
+        self._cache[building.id] = (self._clock() + self.cache_ttl_s, analysis)
+        return analysis
+
+    async def _post(self, body: dict[str, Any]) -> httpx.Response:
+        """Zapytanie pod blokada: rezerwujemy okno, spimy poza nia, dopiero potem pytamy."""
+        client = await self.client()
+        async with self._request_lock:
+            delay = max(0.0, self._next_allowed_s - self._clock())
+            if delay > 0.0:
+                await asyncio.sleep(delay)
+            self._next_allowed_s = self._clock() + self.min_interval_s
+            return await client.post(f"{self.base_url}{ANALYZE_PATH}", json=body)
+
+
+# Nazwy z konfiguracji (`prediction_provider`) na klasy dostawcow.
+PROVIDERS: dict[str, type] = {"mock": MockProvider, "none": UnavailableProvider, "model": HttpModelProvider}
 PROVIDER_NAMES = tuple(PROVIDERS)
 
 
-def build_provider(name: str) -> RoofAnalysisProvider:
+def build_provider(name: str, settings: Any | None = None) -> RoofAnalysisProvider:
     """Nazwa z konfiguracji na dostawce. Literowka nie wywala serwera, tylko konczy sie „nie wiemy".
 
     Swiadomie nie rzucamy bledem: nierozpoznana nazwa nie moze skutkowac tym, ze pokazemy
     jakikolwiek wynik — brak konfiguracji i zla konfiguracja znacza dokladnie tyle samo.
+    Tak samo `model` bez adresu albo bez tokenu: lepiej „nie wiemy" niz zapytanie, ktore i tak
+    wroci 401.
     """
-    factory = PROVIDERS.get(name.strip().lower())
+    key = name.strip().lower()
+    if key == "model":
+        url = str(getattr(settings, "prediction_api_url", "") or "")
+        # Token jest SecretStr, zeby nie wyciekl przez repr Settings; tu potrzebna jest wartosc.
+        raw_token = getattr(settings, "prediction_api_token", "")
+        token = raw_token.get_secret_value() if hasattr(raw_token, "get_secret_value") else str(raw_token or "")
+        if not url or not token:
+            return UnavailableProvider()
+        return HttpModelProvider(
+            base_url=url,
+            token=token,
+            timeout_s=float(getattr(settings, "prediction_timeout_s", 60.0)),
+            cache_ttl_s=float(getattr(settings, "prediction_cache_ttl_s", 3600.0)),
+            min_interval_s=float(getattr(settings, "prediction_min_interval_s", 6.0)),
+        )
+    factory = PROVIDERS.get(key)
     if factory is None:
         return UnavailableProvider()
     provider: RoofAnalysisProvider = factory()
@@ -279,6 +508,6 @@ def get_provider(app: Any) -> RoofAnalysisProvider:
     """
     provider: RoofAnalysisProvider | None = getattr(app.state, "roof_provider", None)
     if provider is None:
-        provider = build_provider(app.state.settings.prediction_provider)
+        provider = build_provider(app.state.settings.prediction_provider, app.state.settings)
         app.state.roof_provider = provider
     return provider

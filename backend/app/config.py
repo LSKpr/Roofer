@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,20 @@ class Settings(BaseSettings):
     # endpoint oddaje wtedy `source: "unavailable"` i `probability: null`, czyli „nie wiemy".
     # Dostawce prawdziwego modelu dopisuje sie w app/prediction.py (PROVIDERS), nie w trasie.
     prediction_provider: str = "mock"
+
+    # Zewnetrzne API modelu (`model`). Bez adresu albo bez tokenu dostawca degraduje sie do „nie
+    # wiemy" zamiast pytac i dostawac 401. TOKEN JEST SEKRETEM: trzymamy go w .env, ktory jest
+    # w .gitignore, i nie wypisujemy go nigdzie — HttpModelProvider ma wlasny `__repr__`.
+    prediction_api_url: str = ""
+    # SecretStr, a nie str: pydantic wypisuje cale Settings w komunikacie bledu i w logu startu,
+    # wiec zwykly napis wyciekl do pierwszego lepszego tracebacku. Zlapal to test, ktory sprawdzal
+    # co innego — wartosc widac tylko przez `.get_secret_value()`.
+    prediction_api_token: SecretStr = SecretStr("")
+    prediction_timeout_s: float = 60.0
+    # Ocena tego samego dachu z tego samego zdjecia sie nie zmienia, wiec cache nie falszuje
+    # odpowiedzi, a chroni przed limitem 10 zapytan na minute po stronie tamtej instancji.
+    prediction_cache_ttl_s: float = 3600.0
+    prediction_min_interval_s: float = 6.0
 
     @property
     def allowed_origins(self) -> list[str]:

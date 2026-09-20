@@ -166,10 +166,41 @@ W interfejsie atrapa ma nad werdyktem napis „Wynik demonstracyjny · model nie
 liczbę; drugi test pilnuje, że przy `source: "model"` tego ostrzeżenia **nie ma** — inaczej prawdziwy
 wynik wyglądałby na podrobiony.
 
-Gdy pojawi się API współpracownika (przyjmuje bbox, oddaje poligony wykrytych dachów): dopisać
-`HttpModelProvider` w `app/prediction.py`, przeciąć jego poligony z geometrią budynku
-(`ST_Intersects` + największy udział powierzchni, bo serwis oddaje dachy z okolicy) i przestawić
-zmienną środowiskową. Trasa, kontrakt i cały frontend zostają bez zmian.
+### Prawdziwy model jest podłączony (2026-09-20)
+
+`PREDICTION_PROVIDER=model` woła `POST {PREDICTION_API_URL}/v1/analyze` z tokenem Bearer. Sprawdzone
+na żywo: nasz `/api/buildings/27469148/analysis` oddaje `source: "model"`, `probability: 0.2414`
+i `modelName` równe `meta.model_id` tamtego serwisu.
+
+**Dopasowanie idzie po `source_id`, nie geometrycznie.** Serwis korzysta z tego samego snapshotu OSM
+(jego `/health` podaje 2 585 219 budynków, czyli nasza liczba co do jednego) i sam oddaje `source_id`
+równy naszemu `osm_id`. Przecinanie poligonów byłoby tu gorsze i niepotrzebne: w prostokącie jednego
+budynku siedzą sąsiednie dachy — przy pierwszym żywym zapytaniu obok bloku wyszedł garaż sąsiada.
+
+**Sieć.** Publiczny port 8000 tamtej instancji jest odfiltrowany przez Security Group (port 22
+odpowiada w 21 ms, porty 80/443/8000 dają timeout), więc jedyna droga to tunel SSH. Lokalnie **8010**,
+bo na 8001 stoi nasz backend:
+`ssh -N -L 8010:127.0.0.1:8000 student@<host>`
+
+**Limity tamtej instancji:** 10 zapytań na minutę, jedno naraz, 100 budynków i 4 km² na żądanie
+(sprawdzone: większy prostokąt dostaje `413 TOO_MANY_BUILDINGS`). Karta pyta o ocenę przy każdym
+kliknięciu, więc `HttpModelProvider` ma cache po `osm_id` (drugie pytanie: 8 ms zamiast 7,8 s)
+i odstęp między żądaniami. 429 nie jest ponawiane w pętli — oddajemy „nie wiemy" z czasem z
+`Retry-After`.
+
+**Model patrzy na inne zdjęcie niż użytkownik**: Google Satellite zoom 20, a karta pokazuje
+ortofotomapę GUGiK. Każda nota mówi to wprost, razem ze skutecznością podaną przez autora
+(77% trafności, 63% wykrywalności azbestu). Bez tego zdania ktoś porówna ocenę z kadrem obok
+i wyciągnie wniosek z dwóch różnych źródeł.
+
+Statusy tamtego API wchodzą w nasze trzy stany bez naciągania: `ok` → `suspected`/`unlikely` po progu
+0,5, a `low_quality`, `imagery_error` i `geometry_error` → `unknown` z `probability: null` i powodem
+z pola `reasons`. Autor sam rozróżnia „sprawdziłem i nie widzę" od „nie sprawdziłem", więc nie
+musieliśmy tego zgadywać.
+
+Pierwszy pomiar zgodności z rejestrem (74 budynki pod Zwoleniem, 64 z oceną): zgłoszone w GeoAzbest
+mają średnią ocenę **0,512**, niezgłoszone **0,282**. Próba jest mała (3 zgłoszone), więc to sygnał,
+nie dowód — ale kierunek się zgadza, a 14 niezgłoszonych budynków dostało ocenę powyżej 0,5.
 
 ## Pułapki potwierdzone uruchomieniem, nie domysłem
 
@@ -266,7 +297,14 @@ zmienną środowiskową. Trasa, kontrakt i cały frontend zostają bez zmian.
 27. **Rzutuj parametr, nie kolumnę.** `WHERE osm_id::bigint = 27469148` daje `Parallel Seq Scan`
     i **263,8 ms**, a `WHERE osm_id = %(id)s::text` idzie po indeksie w **0,4 ms**. Zmierzone
     `EXPLAIN (ANALYZE)` na pełnych danych; test integracyjny pilnuje, że w planie nie ma `Seq Scan`.
-28. **Elasticsearch: świadomie nie używamy** (decyzja właściciela z 2026-09-20, mimo tracku
+28. **Sekret w `Settings` musi być `SecretStr`.** Pydantic wypisuje cały obiekt ustawień w
+    komunikacie błędu, więc token trzymany jako `str` wyciekł do pierwszego lepszego tracebacku —
+    zobaczyłem go w wydruku testu, który sprawdzał coś zupełnie innego. `SecretStr` maskuje
+    wartość w `repr`, `str` i `model_dump`; kod sięga po nią jawnie przez `get_secret_value()`.
+29. **Diakrytyki: komentarze bez, komunikaty z.** Zasada „bez znaków diakrytycznych" dotyczy
+    komentarzy i identyfikatorów w kodzie. Noty i błędy czyta użytkownik w interfejsie i „Ocena
+    z jednego zdjecia satelitarnego" wygląda tam na usterkę, a nie na decyzję.
+30. **Elasticsearch: świadomie nie używamy** (decyzja właściciela z 2026-09-20, mimo tracku
     sponsorskiego). Zapytania, które faktycznie wykonujemy, są geometryczne, a atrybutów do
     filtrowania mamy jedno pole — patrz sekcja „Dane". Gdyby wracać do tematu: najpierw bogatsza
     warstwa rejestru, potem podział „PostGIS liczy geometrię, Elastic odpowiada za fasety

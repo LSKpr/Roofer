@@ -338,16 +338,21 @@ def test_no_note_claims_anything_about_asbestos_itself() -> None:
 
 def test_notes_explain_what_the_model_actually_recognises() -> None:
     assert "eternitu" in MOCK_SUSPECTED_NOTE
-    assert "obecnosc azbestu" in MOCK_SUSPECTED_NOTE  # wprost: pokrycie, nie sklad materialu
+    assert "obecność azbestu" in MOCK_SUSPECTED_NOTE  # wprost: pokrycie, nie sklad materialu
     assert "eternit" in MOCK_UNLIKELY_NOTE
     assert "ocena zero" in MOCK_UNKNOWN_NOTE
     assert "ocena zero" in UNAVAILABLE_NOTE
 
 
-def test_notes_have_no_polish_diacritics() -> None:
-    """Konwencja backendu: komunikaty po polsku, ale bez znakow diakrytycznych."""
+def test_notes_are_written_in_proper_polish() -> None:
+    """Noty widzi urzednik w karcie budynku, wiec pisze sie je z ogonkami.
+
+    Zasada „bez znakow diakrytycznych" dotyczy komentarzy i identyfikatorow w kodzie. Wczesniejsza
+    wersja tego testu wymagala braku ogonkow takze w komunikatach — i przez to w interfejsie stalo
+    „Ocena z jednego zdjecia satelitarnego", co wyglada na usterke, a nie na decyzje.
+    """
     for label, note in all_notes().items():
-        assert not set(note) & set(DIACRITICS), label
+        assert set(note) & set(DIACRITICS), label
 
 
 def test_endpoint_returns_the_full_contract_in_camel_case() -> None:
