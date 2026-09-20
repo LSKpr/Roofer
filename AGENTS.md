@@ -19,6 +19,11 @@ The packages are scaffolding; their `src/index.ts` files are empty on purpose.
 Write tests as you go and keep the units under test small and directly checkable; that is an
 explicit instruction from the project owner, not a style preference.
 
+Push to `origin` often, without being asked each time: after every phase and after every
+self-contained step within one. Work is on the `frontendv2` branch. Commit only with the working
+tree verified green (`pnpm build`, `pnpm typecheck`, `pnpm test`, `pnpm lint`), so that what lands
+on the remote is always in a state someone else could pull.
+
 ## Testing
 
 The runner is Node's built-in `node:test` with `node:assert/strict`. There is no Vitest or Jest.
