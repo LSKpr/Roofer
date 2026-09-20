@@ -11,9 +11,12 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
-    "dev": "pnpm -r --parallel dev",
-    "db:up": "docker compose up -d mysql",
-    "db:down": "docker compose down"
+    "dev:backend": "pnpm --filter @roofer/backend dev",
+    "dev:frontend": "pnpm --filter @roofer/frontend dev",
+    "db:generate": "pnpm --filter @roofer/database generate",
+    "db:migrate": "pnpm --filter @roofer/database migrate",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
