@@ -12,6 +12,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from app.dataversion import bump_version
+
 # Snapshoty pochodza z jednego wojewodztwa; obiekt poza Polska to blad danych, nie granica zakresu.
 POLAND_BBOX = "ST_MakeEnvelope(14.0, 49.0, 24.3, 55.0, 4326)"
 USABLE = f"geom IS NOT NULL AND NOT ST_IsEmpty(geom) AND ST_Intersects(geom, {POLAND_BBOX})"
@@ -222,6 +224,10 @@ def ingest(
         cursor.execute(f"TRUNCATE {dataset.table} CASCADE")
         cursor.execute(dataset.insert_sql)
         inserted = cursor.rowcount
+    # Budynki maja teraz inne identyfikatory (TRUNCATE nie zeruje sekwencji), wiec kazdy kafel
+    # w cache przegladarki jest od tej chwili nieprawdziwy. Token wersji idzie w tej samej
+    # transakcji co dane — inaczej istnialaby chwila z nowymi danymi i starym ETagiem.
+    bump_version(connection)
     return IngestReport(
         dataset=dataset.label,
         staged=counts["staged"],
@@ -254,4 +260,7 @@ def match(
         cursor.execute(RESET_MATCH_COUNTS)
         cursor.execute(APPLY_MATCH_COUNTS, thresholds)
         buildings = cursor.rowcount
+    # `registry_matches` decyduje o kolorze budynku i o warstwie punktowej w kaflach, wiec
+    # przeliczenie dopasowan zmienia tresc kafli tak samo jak sam import.
+    bump_version(connection)
     return MatchReport(pairs=pairs, qualifying_pairs=qualifying, buildings_with_match=buildings)

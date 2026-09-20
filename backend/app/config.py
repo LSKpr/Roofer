@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     api_port: int = 8001
 
+    # Jak dlugo token wersji danych (ETag kafli) moze byc podawany z pamieci procesu. Jedno
+    # przesuniecie mapy to kilkadziesiat kafli, wiec bez tego bufora kazdy kafel pytalby baze
+    # o te sama wartosc. Tyle samo sekund wynosi maksymalne opoznienie uniewaznienia cache'a
+    # po imporcie — import trwa minuty, wiec to nie ma znaczenia.
+    data_version_ttl_s: float = 5.0
+
     # Ortofotomapa GUGiK (WMS 1.3.0, warstwa Raster). StandardResolution jest domyslne, bo
     # HighResolution ma pokrycie tylko nad miastami i poza nimi oddaje pusty kafel.
     imagery_wms_url: str = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"

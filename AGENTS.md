@@ -209,12 +209,25 @@ zmienną środowiskową. Trasa, kontrakt i cały frontend zostają bez zmian.
     usuwać, a nie tylko przyjmować wywołanie. Po wpięciu rysowania prostokąta brak `off` wywalił
     szesnaście testów `MapView` naraz, a atrapa, która tylko udaje usuwanie, kłamie w testach
     liczących nasłuchy.
-21. **Ponowny import budynków zmienia ich identyfikatory** (`TRUNCATE` nie zeruje sekwencji), więc
-    zapisane linki do konkretnego budynku przestają działać. Jeśli kiedyś będą potrzebne trwałe
-    adresy, trzeba adresować przez `osm_id`, nie przez klucz z bazy.
-22. **`.click()` na elemencie DOM nie przechodzi przez `act()` Reacta** — asercja biegnie przed
+21. **Ponowny import budynków zmienia ich identyfikatory** (`TRUNCATE` nie zeruje sekwencji): były
+    poniżej 2 585 220, po drugim imporcie 2 585 326–5 170 544. `osm_id` jest unikalny (2 585 219
+    wartości na 2 585 219 budynków), więc trwałe adresowanie jest możliwe — dziś nieużywane.
+22. **Kafle nie mogą mieć `max-age`.** To był prawdziwy błąd, nie teoria: po ponownym imporcie
+    przeglądarka przez godzinę podawała kafle ze starymi identyfikatorami obiektów, klik wysyłał
+    nieistniejący numer i karta budynku pokazywała 404. Teraz kafle idą z `Cache-Control: no-cache`
+    i słabym `ETag` zbudowanym z tokenu z tabeli `data_version` oraz współrzędnych; `If-None-Match`
+    daje 304 **bez odpytywania PostGIS-a** (2,2 ms i zero bajtów wobec 39 ms i 45 KB na gęstym
+    kaflu). `ingest()` i `match()` podbijają token w tej samej transakcji co dane, więc nie ma stanu
+    „nowe dane, stary token". Konsekwencja: **import wymaga migracji 005** i bez niej przerwie się
+    głośno — świadomie, bo cichy brak tokenu to powrót tego samego błędu.
+23. **`ST_AsMVT` nie daje powtarzalnych bajtów** — ten sam kafel przy niezmienionych danych oddał
+    45 034 B i 44 979 B, bo zapytanie nie ma `ORDER BY`, a kolejność obiektów zależy od planu.
+    Dlatego ETag jest słaby (`W/`): obiecuje tę samą treść, nie te same bajty.
+24. **Ortofoto zostaje z `max-age=86400`** — zdjęcie z konkretnego nalotu jest niezmienne, więc
+    problem z punktu 22 tam nie istnieje.
+25. **`.click()` na elemencie DOM nie przechodzi przez `act()` Reacta** — asercja biegnie przed
     przerysowaniem. W testach używaj `fireEvent.click`.
-23. **Elasticsearch: świadomie nie używamy** (decyzja właściciela z 2026-09-20, mimo tracku
+26. **Elasticsearch: świadomie nie używamy** (decyzja właściciela z 2026-09-20, mimo tracku
     sponsorskiego). Zapytania, które faktycznie wykonujemy, są geometryczne, a atrybutów do
     filtrowania mamy jedno pole — patrz sekcja „Dane". Gdyby wracać do tematu: najpierw bogatsza
     warstwa rejestru, potem podział „PostGIS liczy geometrię, Elastic odpowiada za fasety
