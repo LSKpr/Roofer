@@ -13,8 +13,10 @@ from typing import Any
 import psycopg
 import pytest
 
+from app import dataversion
 from app.config import Settings
 from app.dataversion import (
+    TILE_SCHEMA_VERSION,
     DataVersion,
     bump_version,
     etag_matches,
@@ -76,10 +78,33 @@ def test_every_token_is_different() -> None:
     assert len({new_token() for _ in range(100)}) == 100
 
 
-def test_etag_joins_the_token_with_the_tile_coordinates() -> None:
+def test_etag_joins_the_schema_version_the_token_and_the_tile_coordinates() -> None:
     # Slaby walidator (`W/`), bo ST_AsMVT bez ORDER BY nie gwarantuje tych samych bajtow przy tych
     # samych danych (zmierzone: 45 034 vs 44 979 bajtow dla jednego kafla). Obiecujemy tresc, nie bajty.
-    assert tile_etag("abc", *TILE) == 'W/"abc-14-9000-5500"'
+    assert tile_etag("abc", *TILE) == f'W/"v{TILE_SCHEMA_VERSION}-abc-14-9000-5500"'
+
+
+def test_the_tile_schema_version_is_past_the_identifiers_from_the_sequence() -> None:
+    # 1 to kafle z kluczem z sekwencji; identyfikator obiektu to dzis osm_id, wiec minimum to 2.
+    assert TILE_SCHEMA_VERSION >= 2
+
+
+def test_bumping_the_tile_schema_version_changes_the_etag_of_the_same_tile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Warunek, bez ktorego zmiana tresci kafla jest niebezpieczna.
+
+    Token wersji danych zmienia sie przy imporcie, a przejscie na inny identyfikator obiektu to
+    zmiana KODU przy niezmienionych danych. Bez skladnika schematu przegladarka potwierdzilaby
+    swiezosc kafla ze starymi identyfikatorami i klik w budynek znowu konczylby sie 404.
+    """
+    before = tile_etag("ten-sam-token", *TILE)
+
+    monkeypatch.setattr(dataversion, "TILE_SCHEMA_VERSION", TILE_SCHEMA_VERSION + 1)
+    after = tile_etag("ten-sam-token", *TILE)
+
+    assert before != after
+    assert not etag_matches(before, after)  # stary walidator nie moze dac 304
 
 
 def test_the_same_tile_and_token_give_the_same_etag() -> None:

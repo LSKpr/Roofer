@@ -48,6 +48,8 @@ class Stats(Camel):
 
 class ListedBuilding(Camel):
     id: int
+    """`osm_id`, czyli ten sam adres, ktorym wola sie `/api/buildings/{id}` i ten sam, ktory niesie
+    kafel. Ksztalt odpowiedzi jest bez zmian — zmienilo sie tylko znaczenie tej liczby."""
     area_m2: float
     centroid: Coordinates
     nr_dzialki: str | None = None

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Building, RegistryMatch } from '../api/client'
 import { useRoofAnalysis } from '../hooks/useRoofAnalysis'
-import { buildingTypeLabel } from '../lib/osmBuildingType'
+import { buildingTypeLabel, buildingTypeName } from '../lib/osmBuildingType'
 import { RoofAnalysis } from './RoofAnalysis'
 import { RoofPhoto } from './RoofPhoto'
 
@@ -23,8 +23,12 @@ function percentLabel(share: number): string {
   return `${Math.round(share * 100)}%`
 }
 
+/**
+ * Nazwa, a jak jej nie ma — rodzaj po polsku. `kind` (`fclass`) tu nie wchodzi, bo dla wszystkich
+ * 2,58 mln budynkow ma wartosc „building" i w naglowku karty wygladalo to jak awaria.
+ */
 function headerTitle(building: Building): string {
-  return building.name?.trim() || building.kind?.trim() || 'Budynek bez nazwy'
+  return building.name?.trim() || buildingTypeName(building.osmType) || 'Budynek bez nazwy'
 }
 
 /** Numer dzialki jest jedynym opisowym atrybutem rejestru; bez niego zostaje identyfikator zrodla. */
@@ -151,7 +155,9 @@ export function BuildingPanel({ building, loading, error, onClose }: BuildingPan
             label="Centroid (lng, lat)"
             value={`${building.centroid.lng.toFixed(5)}, ${building.centroid.lat.toFixed(5)}`}
           />
-          {building.osmId ? <Row label="OpenStreetMap" value={building.osmId} /> : null}
+          {/* Identyfikator budynku JEST identyfikatorem z OSM, wiec da sie po nim znalezc obiekt
+              na openstreetmap.org — w przeciwienstwie do dawnego klucza z sekwencji. */}
+          <Row label="OpenStreetMap" value={String(building.id)} />
         </dl>
       </Section>
 

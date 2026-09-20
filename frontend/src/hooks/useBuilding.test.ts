@@ -5,7 +5,6 @@ import type { Building } from '../api/client'
 
 const BUILDING: Building = {
   id: 42,
-  osmId: '1',
   kind: 'building',
   osmType: 'house',
   name: null,

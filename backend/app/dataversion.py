@@ -10,6 +10,11 @@ Naprawa: kafel jest `no-cache` z ETagiem. Przegladarka moze go trzymac dowolnie 
 uzyciem musi dopytac, a serwer porownuje jej ETag z tokenem z tabeli `data_version` (migracja 005).
 Import podbija token w tej samej transakcji co dane, wiec nie ma stanu „nowe dane, stary token".
 
+Token pilnuje jednak tylko DANYCH. Kafel zmienia sie takze wtedy, gdy zmieni sie kod: przejscie
+z identyfikatorow z sekwencji na `osm_id` daje przy tych samych danych inna tresc kafla, a token
+zostaje ten sam. Dlatego w ETagu jest drugi skladnik, TILE_SCHEMA_VERSION — bez niego przegladarka
+dostalaby 304 na kafel ze starymi identyfikatorami i odtworzylaby ten sam blad 404.
+
 Odczyt tokenu jest buforowany w pamieci procesu na kilka sekund, bo jedno przesuniecie mapy to
 kilkadziesiat kafli i tyle samo pytan o te sama wartosc.
 """
@@ -31,6 +36,17 @@ ON CONFLICT (only_row) DO UPDATE SET token = excluded.token, updated_at = exclud
 # Ile sekund token moze byc podawany z pamieci procesu. To zarazem maksymalne opoznienie
 # uniewaznienia cache'a po imporcie: import trwa minuty, wiec kilka sekund nic nie psuje.
 CACHE_TTL_S = 5.0
+
+# Wersja SCHEMATU kafla, czyli jego tresci i znaczenia. KAZDA zmiana tego, co kafel niesie, wymaga
+# podbicia tej liczby: inne znaczenie identyfikatora obiektu, inny atrybut, inny prog zoomu, inny
+# extent. Token wersji danych tego nie zalatwia, bo on zmienia sie przy imporcie, a to jest zmiana
+# KODU przy niezmienionych danych — bez tego skladnika przegladarka potwierdzilaby swiezosc kafla,
+# ktory lezy u niej w cache, i dalej rysowalaby stara tresc.
+#
+# 1 — identyfikator obiektu to klucz `id` z sekwencji bazy (stan do 2026-09-21),
+# 2 — identyfikator obiektu to `osm_id`, bo klucz z sekwencji nie przezywa ponownego importu
+#     (pulapka 21 w AGENTS.md) i klik w budynek z kafla w cache konczyl sie 404.
+TILE_SCHEMA_VERSION = 2
 
 
 def new_token() -> str:
@@ -57,11 +73,13 @@ def bump_version(connection: Any, token: str | None = None) -> str:
 
 
 def tile_etag(token: str | None, z: int, x: int, y: int) -> str | None:
-    """ETag kafla: token wersji danych plus wspolrzedne.
+    """ETag kafla: wersja schematu, token wersji danych i wspolrzedne.
 
-    Token odpowiada za to, ze po imporcie zaden stary kafel nie zostanie uznany za swiezy, a
-    wspolrzedne za to, ze kafle nie potwierdzaja swiezosci jeden drugiemu. Bez tokenu ETagu nie ma:
-    walidator, ktorego nie umiemy powiazac z wersja danych, jest gorszy niz jego brak.
+    Token odpowiada za to, ze po imporcie zaden stary kafel nie zostanie uznany za swiezy,
+    TILE_SCHEMA_VERSION za to samo po zmianie tresci albo znaczenia kafla w kodzie (dane moga byc
+    wtedy identyczne, wiec token sie nie ruszy), a wspolrzedne za to, ze kafle nie potwierdzaja
+    swiezosci jeden drugiemu. Bez tokenu ETagu nie ma: walidator, ktorego nie umiemy powiazac
+    z wersja danych, jest gorszy niz jego brak.
 
     Walidator jest SLABY (`W/`), i to nie jest ostroznosc na zapas: ten sam kafel z tymi samymi
     danymi oddal raz 45 034, a raz 44 979 bajtow. ST_AsMVT nie ma ORDER BY, wiec kolejnosc obiektow
@@ -70,7 +88,7 @@ def tile_etag(token: str | None, z: int, x: int, y: int) -> str | None:
     """
     if not token:
         return None
-    return f'W/"{token}-{z}-{x}-{y}"'
+    return f'W/"v{TILE_SCHEMA_VERSION}-{token}-{z}-{x}-{y}"'
 
 
 def etag_matches(if_none_match: str | None, etag: str | None) -> bool:

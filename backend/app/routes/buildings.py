@@ -33,7 +33,11 @@ class Building(Camel):
     """`not_listed` znaczy „nie ma go w rejestrze", a nie „dach jest czysty"."""
 
     id: int
-    osm_id: str | None
+    """`osm_id` z OpenStreetMap, nie klucz z sekwencji bazy: tylko ten przezywa ponowny import.
+
+    Osobnego `osmId` tu nie ma i nie ma go byc — po zmianie adresowania bylaby to ta sama liczba
+    raz jako liczba, raz jako napis, i nic nie mowiloby, ktora jest adresem budynku.
+    """
     kind: str | None
     """Rodzaj z OSM (`type`): house, apartments, outbuilding, garage. None, gdy nie podano."""
     osm_type: str | None
@@ -47,8 +51,7 @@ class Building(Camel):
 
 def to_building(row: dict[str, Any]) -> Building:
     return Building(
-        id=row["id"],
-        osm_id=row["osm_id"],
+        id=row["id"],  # kolumna `id` w BUILDING_SQL to osm_id::bigint, nie klucz z sekwencji
         kind=row["fclass"],
         osm_type=row["osm_type"],
         name=row["name"],
@@ -60,11 +63,14 @@ def to_building(row: dict[str, Any]) -> Building:
     )
 
 
-@router.get("/buildings/{building_id}", response_model=Building)
-async def building(building_id: int, request: Request) -> Building:
+@router.get("/buildings/{osm_id}", response_model=Building)
+async def building(osm_id: int, request: Request) -> Building:
+    """Adresem budynku jest `osm_id`. Typ `int` zostaje, bo walidacje ma robic FastAPI, a nie SQL:
+    zamiast 500 z bazy dostajemy 422 na „/api/buildings/abc". Do zapytania parametr idzie rzutowany
+    na `text`, zeby zadzialal indeks po kolumnie tekstowej (patrz app/buildings.py)."""
     settings = request.app.state.settings
     try:
-        row = await read_building(request.app.state.pool, building_id, settings.database_timeout_s)
+        row = await read_building(request.app.state.pool, osm_id, settings.database_timeout_s)
     except Exception as error:  # padnieta baza to 503, nie 500 z traceba w logu
         raise HTTPException(status_code=503, detail="Baza nie odpowiada.") from error
     if row is None:

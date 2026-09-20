@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 
 from app.area import (
+    AREA_SCAN_SQL,
     MAX_AREA_KM2,
     BoundingBox,
     area_problem,
@@ -21,6 +22,8 @@ SETTINGS = Settings(database_url="postgresql://unused")
 
 # Kolejnosc kolumn AREA_SCAN_SQL: total, listed, dachy, dachy zgloszone, rejestr, lista budynkow.
 # Ostatnia kolumna to json, wiec psycopg oddaje ja jako gotowa liste slownikow.
+#
+# `id` na liscie to osm_id — dlatego liczby sa z zakresu identyfikatorow OSM, a nie z sekwencji bazy.
 ROW = (
     12,
     5,
@@ -28,8 +31,8 @@ ROW = (
     900.25,
     7,
     [
-        {"id": 41, "areaM2": 300.0, "lng": 21.08, "lat": 51.25, "nrDzialki": "146501_1.1.1"},
-        {"id": 42, "areaM2": 120.5, "lng": 21.081, "lat": 51.251, "nrDzialki": None},
+        {"id": 27469148, "areaM2": 300.0, "lng": 21.08, "lat": 51.25, "nrDzialki": "146501_1.1.1"},
+        {"id": 28287777, "areaM2": 120.5, "lng": 21.081, "lat": 51.251, "nrDzialki": None},
     ],
 )
 
@@ -101,6 +104,33 @@ def test_format_km2_uses_a_polish_decimal_comma_and_drops_a_trailing_zero() -> N
     assert format_km2(25.0) == "25"
 
 
+def one_line(sql: str) -> str:
+    """SQL bez wyrownania kolumn, zeby asercje nie pilnowaly liczby spacji."""
+    return " ".join(sql.split())
+
+
+def test_the_listed_building_identifier_is_osm_id_as_an_integer() -> None:
+    """Ksztalt odpowiedzi jest bez zmian, zmienilo sie znaczenie `id`: to osm_id, ten sam adres,
+    ktory niesie kafel i ktorym wola sie /api/buildings/{id}. Rzutowanie na bigint jest potrzebne,
+    bo kolumna jest tekstowa, a `id` w kontrakcie to liczba."""
+    sql = one_line(AREA_SCAN_SQL)
+
+    assert "b.osm_id::bigint AS id" in sql
+    assert "'id', listed.id" in sql
+    # Wewnetrzny klucz zostaje w zlaczeniu z dopasowaniami i nigdzie wiecej.
+    assert sql.count("= b.id") == 1
+    assert "m.building_id = b.id" in sql
+
+
+def test_the_listed_order_does_not_depend_on_the_sequence_key() -> None:
+    """Tie-breaker po osm_id, bo klucz z sekwencji po ponownym imporcie przestawialby kolejnosc
+    budynkow o rownej powierzchni — a lista idzie do panelu i do CSV."""
+    sql = one_line(AREA_SCAN_SQL)
+
+    assert "ORDER BY b.area_m2 DESC, id" in sql
+    assert "ORDER BY b.area_m2 DESC, b.id" not in sql
+
+
 def test_parameters_ask_for_one_building_more_than_we_return() -> None:
     parameters = scan_parameters(selection(SMALL_SELECTION), limit=500)
 
@@ -150,7 +180,7 @@ def test_scan_returns_statistics_and_the_listed_buildings() -> None:
     assert body["truncated"] is False
     assert 0.9 < body["areaKm2"] < 1.1
     assert body["listedBuildings"][0] == {
-        "id": 41,
+        "id": 27469148,  # osm_id, czyli adres, ktorym front zapyta o karte budynku
         "areaM2": 300.0,
         "centroid": {"lng": 21.08, "lat": 51.25},
         "nrDzialki": "146501_1.1.1",

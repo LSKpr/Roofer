@@ -48,14 +48,16 @@ def to_response(analysis: RoofAnalysis) -> RoofAnalysisResponse:
 
 
 @router.get(
-    "/buildings/{building_id}/analysis",
+    "/buildings/{osm_id}/analysis",
     response_model=RoofAnalysisResponse,
     responses={404: {}, 503: {}},
 )
-async def analysis(building_id: int, request: Request) -> RoofAnalysisResponse:
+async def analysis(osm_id: int, request: Request) -> RoofAnalysisResponse:
+    """Budynek wskazuje `osm_id`, wiec werdykt atrapy dla tego samego dachu nie zmienia sie po
+    ponownym imporcie — przy kluczu z sekwencji zmienial sie za kazdym razem."""
     settings = request.app.state.settings
     try:
-        shape = await read_building_shape(request.app.state.pool, building_id, settings.database_timeout_s)
+        shape = await read_building_shape(request.app.state.pool, osm_id, settings.database_timeout_s)
     except Exception as error:  # padnieta baza to 503, nie 500 z tracebackiem
         raise HTTPException(status_code=503, detail="Baza nie odpowiada.") from error
     if shape is None:

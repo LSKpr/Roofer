@@ -54,8 +54,14 @@ COVERAGE_SALT = "roofer-mock-coverage:"
 # Zapytanie dostawcy: tylko geometria budynku. Swiadomie NIE ma tu `registry_matches` ani niczego
 # z rejestru — ocena pokrycia ma byc niezalezna od zgloszenia, inaczej „zgadza sie z rejestrem"
 # znaczylo tylko „przepisalem rejestr". Pilnuje tego test w tests/test_prediction.py.
+#
+# Identyfikatorem jest `osm_id`, nie klucz z sekwencji — i to jest dla atrapy ulepszenie, nie tylko
+# spojnosc z reszta API: werdykt liczony ze skrotu identyfikatora przestaje sie zmieniac po kazdym
+# imporcie, bo `osm_id` jest trwaly. Wczesniej ten sam budynek po ponownym imporcie dostawal nowy
+# klucz i nowa „ocene", co na demo wygladalo jak losowanie. Parametr rzutujemy na text, a nie
+# kolumne na bigint, bo tylko wtedy dziala indeks osm_buildings_osm_id_key (migracja 006).
 BUILDING_SHAPE_SQL = """
-SELECT b.id,
+SELECT b.osm_id::bigint                     AS id,
        round(b.area_m2::numeric, 1)::float8 AS area_m2,
        ST_X(b.centroid)                     AS lng,
        ST_Y(b.centroid)                     AS lat,
@@ -64,7 +70,7 @@ SELECT b.id,
        ST_XMax(b.geom)                      AS east,
        ST_YMax(b.geom)                      AS north
 FROM osm_buildings b
-WHERE b.id = %(id)s
+WHERE b.osm_id = %(id)s::text
 """
 
 MOCK_SUSPECTED_NOTE = (
@@ -106,6 +112,7 @@ class BuildingShape:
     """
 
     id: int
+    """`osm_id` budynku — trwaly miedzy importami, wiec atrapa liczy z niego stabilny werdykt."""
     lng: float
     lat: float
     west: float
@@ -160,11 +167,14 @@ class RoofAnalysisProvider(Protocol):
 
 
 def stable_unit(building_id: int, salt: str) -> float:
-    """Liczba z przedzialu [0, 1) wyznaczona ze skrotu identyfikatora.
+    """Liczba z przedzialu [0, 1) wyznaczona ze skrotu identyfikatora budynku, czyli `osm_id`.
 
     `random` bez ziarna migalby przy kazdym kliknieciu i demo pokazywaloby inna „ocene" za kazdym
     razem, wiec bierzemy pierwsze 8 bajtow SHA-256 z osolonego identyfikatora. Ten sam budynek
     zawsze dostaje te sama liczbe, a rozne budynki praktycznie nigdy tej samej.
+
+    Odkad identyfikatorem jest `osm_id`, „ten sam budynek" znaczy takze „po ponownym imporcie":
+    klucz z sekwencji sie wtedy przesuwal i werdykt atrapy dla tego samego dachu sie zmienial.
     """
     digest = hashlib.sha256(f"{salt}{building_id}".encode()).digest()
     return int.from_bytes(digest[:8], "big") / 2**64
@@ -187,9 +197,9 @@ def shape_from_row(row: Sequence[Any] | None) -> BuildingShape | None:
     )
 
 
-async def read_building_shape(pool: Any, building_id: int, timeout: float) -> BuildingShape | None:
+async def read_building_shape(pool: Any, osm_id: int, timeout: float) -> BuildingShape | None:
     async with pool.connection(timeout=timeout) as connection:
-        cursor = await connection.execute(BUILDING_SHAPE_SQL, {"id": building_id})
+        cursor = await connection.execute(BUILDING_SHAPE_SQL, {"id": osm_id})
         row = await cursor.fetchone()
     return shape_from_row(row)
 
@@ -200,7 +210,7 @@ def unavailable_analysis(note: str = UNAVAILABLE_NOTE) -> RoofAnalysis:
 
 
 def mock_analysis(building_id: int) -> RoofAnalysis:
-    """Deterministyczna atrapa: wejsciem jest wylacznie identyfikator budynku.
+    """Deterministyczna atrapa: wejsciem jest wylacznie identyfikator budynku, czyli `osm_id`.
 
     Powierzchnia ani nic z rejestru tu nie wchodzi. Mniej wejsc to mniej okazji, zeby atrapa
     „przypadkiem" zgadzala sie ze zgloszeniem i zostala wzieta za potwierdzenie.

@@ -35,7 +35,6 @@ function aMatch(overrides: Partial<RegistryMatch> = {}): RegistryMatch {
 function aBuilding(overrides: Partial<Building> = {}): Building {
   return {
     id: 7,
-    osmId: '382845106',
     kind: 'building',
     osmType: 'house',
     name: 'Stodoła',
@@ -63,7 +62,9 @@ it('pokazuje numer dzialki i udzialy przekrycia dla budynku zgloszonego', () => 
 })
 
 it('podaje powierzchnie bez czesci dziesietnej, centroid i identyfikator OSM', () => {
-  renderPanel(aBuilding())
+  // Identyfikator budynku JEST identyfikatorem z OSM, wiec ten sam numer stoi w wierszu
+  // „OpenStreetMap" — dawny klucz z sekwencji bazy nie prowadzil do niczego na zewnatrz.
+  renderPanel(aBuilding({ id: 382845106 }))
 
   expect(screen.getByText('165 m²')).toBeDefined()
   expect(screen.getByText('21.08312, 51.25047')).toBeDefined()
@@ -98,11 +99,12 @@ it('nie wspomina o odrzuconych rekordach, gdy ich nie ma', () => {
   expect(screen.queryByText(/reguły dopasowania/)).toBeNull()
 })
 
-it('nazywa budynek rodzajem, a potem zastepczo, gdy nie ma nazwy', () => {
-  renderPanel(aBuilding({ name: '  ', kind: 'farm_auxiliary' }))
-  expect(screen.getByText('farm_auxiliary')).toBeDefined()
+it('nazywa budynek bez nazwy jego rodzajem po polsku, a nie wartoscia fclass', () => {
+  // `kind` to zawsze „building", wiec w naglowku karty wygladalo jak awaria.
+  renderPanel(aBuilding({ name: '  ', kind: 'building', osmType: 'farm_auxiliary' }))
+  expect(screen.getByText('budynek gospodarczy')).toBeDefined()
 
-  renderPanel(aBuilding({ name: null, kind: null }))
+  renderPanel(aBuilding({ name: null, kind: 'building', osmType: null }))
   expect(screen.getByText('Budynek bez nazwy')).toBeDefined()
 })
 

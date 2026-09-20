@@ -46,7 +46,6 @@ const HEALTH: Health = { status: 'ok', database: 'ok', postgis: '3.5.2', detail:
 
 const BUILDING: Building = {
   id: 42,
-  osmId: '382845106',
   kind: 'building',
   osmType: 'house',
   name: null,

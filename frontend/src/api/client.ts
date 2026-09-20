@@ -17,8 +17,11 @@ export type RegistryMatch = {
 
 /** `not_listed` znaczy „nie ma go w rejestrze", a nie „dach jest czysty". */
 export type Building = {
+  /**
+   * `osm_id` z OpenStreetMap, nie klucz z sekwencji bazy: ten przezywa ponowny import danych,
+   * a klucz z sekwencji nie (`TRUNCATE` go nie zeruje, wiec po imporcie numery sie przesuwaja).
+   */
   id: number
-  osmId: string | null
   /** `fclass` z warstwy Geofabrik — dla kazdego budynku to 'building', wiec nic nie wnosi. */
   kind: string | null
   /** Rodzaj z OSM (`type`): 'house', 'apartments', 'outbuilding', 'garage'. Ma go ~65% budynkow. */

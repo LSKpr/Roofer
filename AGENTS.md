@@ -209,9 +209,14 @@ zmienną środowiskową. Trasa, kontrakt i cały frontend zostają bez zmian.
     usuwać, a nie tylko przyjmować wywołanie. Po wpięciu rysowania prostokąta brak `off` wywalił
     szesnaście testów `MapView` naraz, a atrapa, która tylko udaje usuwanie, kłamie w testach
     liczących nasłuchy.
-21. **Ponowny import budynków zmienia ich identyfikatory** (`TRUNCATE` nie zeruje sekwencji): były
-    poniżej 2 585 220, po drugim imporcie 2 585 326–5 170 544. `osm_id` jest unikalny (2 585 219
-    wartości na 2 585 219 budynków), więc trwałe adresowanie jest możliwe — dziś nieużywane.
+21. **Budynki adresujemy przez `osm_id`, nie przez klucz z sekwencji.** Ponowny import przesuwa
+    klucze (`TRUNCATE` nie zeruje sekwencji: było poniżej 2 585 220, po drugim imporcie
+    2 585 326–5 170 544), więc zapisane adresy przestawały działać. `osm_id` jest wypełniony,
+    unikalny, całkowity i dodatni dla wszystkich 2 585 219 budynków — od migracji 006 pilnuje tego
+    **unikalny** indeks, żeby duplikat w przyszłym snapshocie przerwał import głośno. `id` zostaje
+    wewnętrznym kluczem złączeń (`building_registry_match.building_id`); na zewnątrz — w kaflach,
+    w `/api/buildings/{osm_id}` i na liście ze skanu — widać wyłącznie `osm_id`. Pole `osmId`
+    zniknęło z odpowiedzi, bo było tą samą liczbą w drugim typie.
 22. **Kafle nie mogą mieć `max-age`.** To był prawdziwy błąd, nie teoria: po ponownym imporcie
     przeglądarka przez godzinę podawała kafle ze starymi identyfikatorami obiektów, klik wysyłał
     nieistniejący numer i karta budynku pokazywała 404. Teraz kafle idą z `Cache-Control: no-cache`
@@ -220,6 +225,10 @@ zmienną środowiskową. Trasa, kontrakt i cały frontend zostają bez zmian.
     kaflu). `ingest()` i `match()` podbijają token w tej samej transakcji co dane, więc nie ma stanu
     „nowe dane, stary token". Konsekwencja: **import wymaga migracji 005** i bez niej przerwie się
     głośno — świadomie, bo cichy brak tokenu to powrót tego samego błędu.
+    ETag nosi dodatkowo `TILE_SCHEMA_VERSION` z `app/dataversion.py`, bo zmiana **znaczenia** kafla
+    jest zmianą kodu, której token danych nie unieważni: przejście na `osm_id` bez tego składnika
+    odtworzyłoby ten sam błąd 404. **Każda zmiana treści albo znaczenia kafla wymaga podbicia tej
+    stałej.**
 23. **`ST_AsMVT` nie daje powtarzalnych bajtów** — ten sam kafel przy niezmienionych danych oddał
     45 034 B i 44 979 B, bo zapytanie nie ma `ORDER BY`, a kolejność obiektów zależy od planu.
     Dlatego ETag jest słaby (`W/`): obiecuje tę samą treść, nie te same bajty.
@@ -227,7 +236,15 @@ zmienną środowiskową. Trasa, kontrakt i cały frontend zostają bez zmian.
     problem z punktu 22 tam nie istnieje.
 25. **`.click()` na elemencie DOM nie przechodzi przez `act()` Reacta** — asercja biegnie przed
     przerysowaniem. W testach używaj `fireEvent.click`.
-26. **Elasticsearch: świadomie nie używamy** (decyzja właściciela z 2026-09-20, mimo tracku
+26. **`ST_AsMVT` ustawia identyfikator obiektu tylko dla kolumny całkowitej — i milczy, gdy jej nie
+    ma.** Kolumna `text` (jak surowy `osm_id`) zostanie po cichu doklejona jako zwykły atrybut,
+    a kafel wyjdzie bez identyfikatorów i klikanie przestanie działać bez żadnego błędu. Dlatego
+    w zapytaniu jest `b.osm_id::bigint AS id`, a nazwa kolumny i piąty argument `ST_AsMVT` pochodzą
+    z jednej stałej.
+27. **Rzutuj parametr, nie kolumnę.** `WHERE osm_id::bigint = 27469148` daje `Parallel Seq Scan`
+    i **263,8 ms**, a `WHERE osm_id = %(id)s::text` idzie po indeksie w **0,4 ms**. Zmierzone
+    `EXPLAIN (ANALYZE)` na pełnych danych; test integracyjny pilnuje, że w planie nie ma `Seq Scan`.
+28. **Elasticsearch: świadomie nie używamy** (decyzja właściciela z 2026-09-20, mimo tracku
     sponsorskiego). Zapytania, które faktycznie wykonujemy, są geometryczne, a atrybutów do
     filtrowania mamy jedno pole — patrz sekcja „Dane". Gdyby wracać do tematu: najpierw bogatsza
     warstwa rejestru, potem podział „PostGIS liczy geometrię, Elastic odpowiada za fasety

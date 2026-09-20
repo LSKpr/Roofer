@@ -12,6 +12,7 @@ from app.config import Settings
 from app.imagery import (
     ORIGIN_SHIFT_M,
     PNG_MAGIC,
+    ROOF_BBOX_SQL,
     ImageryClient,
     TileCache,
     getmap_params,
@@ -27,7 +28,10 @@ SETTINGS = Settings(database_url="postgresql://unused")
 PNG = PNG_MAGIC + b"udawany obraz"
 SERVICE_EXCEPTION = b'<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="LayerNotDefined"/>'
 TILE_PATH = "/api/imagery/orthophoto/18/146372/86317.png"
-ROOF_PATH = "/api/buildings/7/roof.png"
+# Prawdziwy `osm_id` zgloszonego budynku, bo tym adresuje sie budynki w API — klucz z sekwencji
+# nie przezywa ponownego importu, wiec zapisany adres zdjecia dachu przestawal dzialac.
+ROOF_OSM_ID = 27469148
+ROOF_PATH = f"/api/buildings/{ROOF_OSM_ID}/roof.png"
 TILE_TEMPLATE = "/api/imagery/orthophoto/{z}/{x}/{y}.png"
 
 
@@ -211,6 +215,18 @@ def test_second_request_for_the_same_tile_is_served_from_cache() -> None:
     assert (first.status_code, second.status_code) == (200, 200)
     assert second.content == PNG
     assert len(seen) == 1
+
+
+def test_the_roof_bbox_query_addresses_the_building_by_osm_id() -> None:
+    """Wycinek dachu wisi w `<img src>`, wiec jego adres musi przezyc ponowny import danych.
+
+    Parametr rzutujemy na text (`osm_id = %(id)s::text`), a nie kolumne na bigint — inaczej indeks
+    z migracji 006 nie zadziala i jeden obrazek kosztuje Seq Scan po calej tabeli budynkow.
+    """
+    sql = " ".join(ROOF_BBOX_SQL.split())
+
+    assert "WHERE osm_id = %(id)s::text" in sql
+    assert "WHERE id = %(id)s" not in sql
 
 
 def test_roof_crop_asks_for_a_square_frame_around_the_building() -> None:

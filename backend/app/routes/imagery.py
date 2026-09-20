@@ -35,15 +35,17 @@ async def orthophoto_tile(z: int, x: int, y: int, request: Request) -> Response:
     return Response(content=payload, media_type=IMAGE_MEDIA_TYPE, headers=CACHE_HEADERS)
 
 
-@router.get("/buildings/{building_id}/roof.png", response_class=Response, responses=RESPONSES)
+@router.get("/buildings/{osm_id}/roof.png", response_class=Response, responses=RESPONSES)
 async def roof_image(
-    building_id: int,
+    osm_id: int,
     request: Request,
     size: int = Query(ROOF_DEFAULT_SIZE, ge=ROOF_MIN_SIZE, le=ROOF_MAX_SIZE),
 ) -> Response:
+    """Budynek wskazuje `osm_id` — ten sam adres, ktory niesie kafel i karta budynku. Liczba
+    calkowita, bo walidacje robi FastAPI; do SQL-a idzie rzutowana na text (patrz app/imagery.py)."""
     settings = request.app.state.settings
     try:
-        bbox = await read_roof_bbox(request.app.state.pool, building_id, settings.database_timeout_s)
+        bbox = await read_roof_bbox(request.app.state.pool, osm_id, settings.database_timeout_s)
     except Exception:  # padnieta baza to 503; w znaczniku <img> tresc bledu i tak nikt nie zobaczy
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     if bbox is None:

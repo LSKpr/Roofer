@@ -48,7 +48,6 @@ it('keeps the z/x/y placeholders that MapLibre fills in itself', () => {
 it('reads a single building', async () => {
   const building: Building = {
     id: 7,
-    osmId: '382845106',
     kind: 'building',
     osmType: 'house',
     name: null,

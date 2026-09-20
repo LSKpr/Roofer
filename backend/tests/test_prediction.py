@@ -32,19 +32,33 @@ from app.prediction import (
 from app.routes import prediction as prediction_routes
 from tests.conftest import FakePool
 
-ANALYSIS_PATH = "/api/buildings/{building_id}/analysis"
+ANALYSIS_PATH = "/api/buildings/{osm_id}/analysis"
 
-# Identyfikatory wybrane tak, zeby pokryly wszystkie trzy werdykty atrapy (policzone raz
-# i przepisane tutaj — gdyby ktos zmienil sol albo prog, te testy maja krzyczec).
-SUSPECTED_ID = 1
-UNLIKELY_ID = 3
-UNKNOWN_ID = 2
+# Identyfikatorem budynku jest `osm_id`, wiec wszystkie liczby tutaj sa prawdziwymi osm_id
+# zgloszonych budynkow z bazy. Wybrane tak, zeby pokryly wszystkie trzy werdykty atrapy (policzone
+# raz i przepisane tutaj — gdyby ktos zmienil sol albo prog, te testy maja krzyczec).
+SUSPECTED_ID = 28287777
+UNLIKELY_ID = 27469148
+UNKNOWN_ID = 31002632
 
-SAMPLE_IDS = (1, 2, 3, 4, 7, 11, 19, 25, 42, 100, 12345, 999999)
+SAMPLE_IDS = (
+    27469148,
+    28287777,
+    28759017,
+    28965947,
+    30683417,
+    31002632,
+    31060079,
+    31968370,
+    42905974,
+    70540123,
+    88999259,
+    93883385,
+)
 
 # Identyfikatory, dla ktorych atrapa oddaje liczbe — tylko takie moga sie roznic probability
 # (budynki bez wyniku maja `None` i to jest w porzadku, ze maja je wszystkie takie samo).
-GRADED_IDS = (1, 3, 4, 5, 7, 42, 100, 12345)
+GRADED_IDS = (27469148, 28287777, 28759017, 28965947, 30683417, 31060079, 31968370, 93883385)
 
 # Kolejnosc kolumn BUILDING_SHAPE_SQL: id, area_m2, lng, lat, west, south, east, north.
 ROW = (SUSPECTED_ID, 126.6, 21.0800, 51.2500, 21.0797, 51.2498, 21.0803, 51.2502)
@@ -118,6 +132,26 @@ def all_notes() -> dict[str, str]:
     }
 
 
+def one_line(sql: str) -> str:
+    """SQL bez wyrownania kolumn, zeby asercje nie pilnowaly liczby spacji."""
+    return " ".join(sql.split())
+
+
+def test_the_provider_query_addresses_the_building_by_osm_id() -> None:
+    """Wejsciem skrotu jest identyfikator budynku, a od teraz jest nim `osm_id`.
+
+    To jest ulepszenie, nie tylko spojnosc z reszta API: `osm_id` przezywa ponowny import, wiec
+    werdykt atrapy dla tego samego dachu przestaje sie zmieniac. Przy kluczu z sekwencji ten sam
+    budynek dostawal po imporcie nowy numer (2 585 326 - 5 170 544 po drugim przebiegu), a wiec
+    nowa „ocene" — na demo wygladalo to jak losowanie.
+    """
+    sql = one_line(BUILDING_SHAPE_SQL)
+
+    assert "b.osm_id::bigint AS id" in sql
+    assert "WHERE b.osm_id = %(id)s::text" in sql  # rzutowanie parametru, zeby dzialal indeks
+    assert "b.id" not in sql  # klucz z sekwencji nie wchodzi juz do atrapy
+
+
 def test_stable_unit_lands_inside_the_unit_interval_and_never_moves() -> None:
     first = [stable_unit(building_id, "sol:") for building_id in SAMPLE_IDS]
     second = [stable_unit(building_id, "sol:") for building_id in SAMPLE_IDS]
@@ -129,7 +163,7 @@ def test_stable_unit_lands_inside_the_unit_interval_and_never_moves() -> None:
 
 def test_stable_unit_with_another_salt_is_an_independent_draw() -> None:
     # Dwie sole daja dwie niezalezne liczby z jednego identyfikatora: „jaka ocena" i „czy jest".
-    assert stable_unit(7, "a:") != stable_unit(7, "b:")
+    assert stable_unit(SUSPECTED_ID, "a:") != stable_unit(SUSPECTED_ID, "b:")
 
 
 def test_shape_from_row_reads_the_bbox_in_sw_then_ne_order() -> None:

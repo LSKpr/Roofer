@@ -57,12 +57,17 @@ ROOF_MIN_SPAN_M = 12.0
 
 # Bbox budynku liczymy od razu w 3857, bo w tym ukladzie jedziemy do WMS-a i w metrach da sie
 # uczciwie wymusic kwadrat. Kolejnosc kolumn jest pozycyjna — trasa nie potrzebuje nazw.
+#
+# Budynek adresuje `osm_id`, tak samo jak w kaflu i na karcie budynku: adres zdjecia dachu musi
+# przezyc ponowny import, bo klucz z sekwencji go nie przezywa (pulapka 21 w AGENTS.md). Parametr
+# rzutujemy na text, a nie kolumne na bigint — inaczej indeks osm_buildings_osm_id_key (migracja
+# 006) nie zadziala i jeden obrazek kosztuje Seq Scan po calej tabeli.
 ROOF_BBOX_SQL = """
 SELECT ST_XMin(envelope), ST_YMin(envelope), ST_XMax(envelope), ST_YMax(envelope)
 FROM (
     SELECT ST_Envelope(ST_Transform(geom, 3857)) AS envelope
     FROM osm_buildings
-    WHERE id = %(id)s
+    WHERE osm_id = %(id)s::text
 ) AS building
 """
 
@@ -256,9 +261,9 @@ def client_for(app: Any) -> ImageryClient:
     return existing
 
 
-async def read_roof_bbox(pool: Any, building_id: int, timeout: float) -> Bbox | None:
+async def read_roof_bbox(pool: Any, osm_id: int, timeout: float) -> Bbox | None:
     async with pool.connection(timeout=timeout) as connection:
-        cursor = await connection.execute(ROOF_BBOX_SQL, {"id": building_id})
+        cursor = await connection.execute(ROOF_BBOX_SQL, {"id": osm_id})
         row = await cursor.fetchone()
     if row is None or row[0] is None:
         return None

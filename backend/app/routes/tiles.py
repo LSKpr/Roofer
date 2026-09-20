@@ -11,6 +11,10 @@ MEDIA_TYPE = "application/vnd.mapbox-vector-tile"
 # w cache przegladarki, tylko o jego swiezosci decyduje ETag, a nie zgadniety czas zycia. Poprzednie
 # `max-age=3600` dawalo po imporcie godzine kafli ze starymi identyfikatorami budynkow i klik
 # w budynek konczyl sie 404 (patrz app/dataversion.py).
+#
+# Uwaga dla kazdej przyszlej zmiany w app/tiles.py: ETag pilnuje wersji danych ORAZ wersji schematu
+# kafla. Inna tresc albo inne znaczenie kafla przy tych samych danych wymaga podbicia
+# TILE_SCHEMA_VERSION, inaczej przegladarka oddaje 304 na kafel, ktorego kod juz nie umie czytac.
 CACHE_HEADERS = {"Cache-Control": "no-cache"}
 
 # Bez tokenu wersji (brak wiersza w bazie, padnieta baza) nie umiemy potwierdzic swiezosci kafla,

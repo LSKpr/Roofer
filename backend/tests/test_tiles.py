@@ -5,7 +5,15 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.dataversion import tile_etag
 from app.main import create_app
-from app.tiles import POINT_MIN_ZOOM, POINT_TILE, POLYGON_MIN_ZOOM, POLYGON_TILE, tile_sql, within_grid
+from app.tiles import (
+    FEATURE_ID,
+    POINT_MIN_ZOOM,
+    POINT_TILE,
+    POLYGON_MIN_ZOOM,
+    POLYGON_TILE,
+    tile_sql,
+    within_grid,
+)
 from tests.conftest import FakePool
 
 SETTINGS = Settings(database_url="postgresql://unused")
@@ -48,6 +56,23 @@ def test_middle_zoom_serves_only_centroids_of_listed_buildings() -> None:
 
 def test_far_zoom_serves_nothing() -> None:
     assert tile_sql(POINT_MIN_ZOOM - 1) is None
+
+
+def test_both_tiles_carry_osm_id_as_the_feature_identifier() -> None:
+    """Identyfikatorem obiektu jest osm_id: klucz z sekwencji nie przezywa ponownego importu, wiec
+    kafel z cache przegladarki wskazywal budynki, ktorych w bazie juz nie ma."""
+    for query in (POLYGON_TILE, POINT_TILE):
+        assert f"b.osm_id::bigint AS {FEATURE_ID}" in query
+        assert "b.id" not in query  # wewnetrzny klucz nie ma prawa wyjsc na kafel
+
+
+def test_the_feature_identifier_is_integer_and_named_the_way_st_asmvt_is_asked() -> None:
+    """Dwa ciche sposoby, zeby kafel stracil identyfikatory obiektow: kolumna niecalkowita
+    (PostGIS traktuje ja wtedy jako zwykly atrybut) albo inna nazwa kolumny niz podana
+    w ST_AsMVT. Oba konczyly by sie kaflem, ktory wyglada dobrze, a nie da sie w niego kliknac."""
+    for query in (POLYGON_TILE, POINT_TILE):
+        assert f"::bigint AS {FEATURE_ID}" in query
+        assert f"'geom', '{FEATURE_ID}')" in query
 
 
 def test_grid_rejects_coordinates_outside_the_zoom_level() -> None:
@@ -118,6 +143,21 @@ def test_a_new_data_version_changes_the_etag_of_the_same_tile() -> None:
     assert before.headers["etag"] != after.headers["etag"]
     assert after.status_code == 200
     assert after.content == b"nowe-id"
+
+
+def test_an_etag_from_the_previous_tile_schema_gives_the_new_tile_not_304() -> None:
+    """Kafel z poprzedniej wersji schematu (identyfikatory z sekwencji) lezy w cache przegladarki
+    z niezmienionym tokenem danych. Bez skladnika schematu w ETagu dostalby 304 i klik w budynek
+    znowu konczylby sie 404 — dlatego ten warunkowy GET musi dac 200."""
+    from_schema_one = f'W/"v1-{TOKEN}-{POLYGON_MIN_ZOOM}-9000-5500"'
+
+    with client_with(FakePool(row=(b"tile-bytes",))) as client:
+        response = client.get(TILE_PATH, headers={"If-None-Match": from_schema_one})
+
+    assert response.status_code == 200
+    assert response.content == b"tile-bytes"
+    assert response.headers["etag"] == TILE_ETAG
+    assert response.headers["etag"] != from_schema_one
 
 
 def test_a_tile_without_a_known_version_is_not_stored_at_all() -> None:

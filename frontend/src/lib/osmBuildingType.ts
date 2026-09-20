@@ -70,3 +70,13 @@ export function buildingTypeLabel(osmType: string | null | undefined): string | 
   const label = LABELS[raw]
   return label ? `${label} · ${raw}` : raw
 }
+
+/**
+ * Sama nazwa rodzaju, bez surowego tagu — do nagłówka karty, gdzie liczy się zwięzłość.
+ * W wierszu danych pokazujemy pełną etykietę z tagiem, bo tam chodzi o weryfikowalność.
+ */
+export function buildingTypeName(osmType: string | null | undefined): string | null {
+  const raw = osmType?.trim()
+  if (!raw) return null
+  return LABELS[raw] ?? raw
+}

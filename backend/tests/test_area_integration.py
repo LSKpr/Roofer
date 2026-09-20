@@ -76,6 +76,35 @@ def test_listed_buildings_come_sorted_and_capped(connection: psycopg.Connection)
     assert all(-90.0 < item["lat"] < 90.0 and -180.0 < item["lng"] < 180.0 for item in result.listed_buildings)
 
 
+def test_listed_buildings_are_addressed_by_osm_id(connection: psycopg.Connection) -> None:
+    """Kazde `id` z listy musi byc osm_id istniejacego zgloszonego budynku.
+
+    To nie jest przepisanie zapytania w tescie: lista idzie do panelu i do CSV, a potem uzytkownik
+    klika w nia i front wola `/api/buildings/{id}`. Gdyby tu wyszedl klucz z sekwencji, caly ruch
+    dalej dostawalby 404 po najblizszym imporcie.
+    """
+    row, elapsed_ms = scan(connection)
+    result = scan_from_row(row, bbox_area_km2(HOTSPOT))
+    identifiers = [item["id"] for item in result.listed_buildings]
+    print(f"\nskan 2x2 km z identyfikatorami osm_id: {elapsed_ms:.1f} ms, {len(identifiers)} budynkow")
+    if not identifiers:
+        pytest.skip("brak zgloszonych budynkow na tym obszarze")
+
+    found = connection.execute(
+        """
+        SELECT count(*)
+        FROM osm_buildings
+        WHERE registry_matches > 0 AND osm_id = ANY(%(ids)s::text[])
+        """,
+        {"ids": [str(value) for value in identifiers]},
+    ).fetchone()
+
+    assert all(isinstance(value, int) and value > 0 for value in identifiers)
+    assert len(set(identifiers)) == len(identifiers)
+    assert found is not None
+    assert found[0] == len(identifiers)
+
+
 def test_python_area_formula_agrees_with_postgis_on_the_spheroid(connection: psycopg.Connection) -> None:
     row = connection.execute(
         POSTGIS_AREA_SQL,

@@ -12,6 +12,9 @@ Trzy decyzje, ktore warto znac przed zmiana tego pliku:
   korzysta z indeksu GiST; przy krawedzi zaznaczenia moze wpasc budynek, ktory styka sie z nim
   tylko bboksem, ale przy dachach rzedu 10 m to pomijalne i zgadza sie z tym, co pokazuja kafle
   (app/tiles.py uzywa tego samego operatora).
+* `listedBuildings[].id` to `osm_id`, tak samo jak identyfikator obiektu w kaflu i adres w
+  `/api/buildings/{id}`. Ksztalt odpowiedzi sie nie zmienil, zmienilo sie znaczenie liczby: klucz
+  z sekwencji bazy po ponownym imporcie wskazywal inny budynek (pulapka 21 w AGENTS.md).
 """
 
 from collections.abc import Sequence
@@ -43,7 +46,11 @@ WITH stats AS (
     FROM osm_buildings b
     WHERE b.geom && {_ENVELOPE}
 ), listed AS (
-    SELECT b.id,
+    -- `id` na liscie to osm_id, bo ta liczba idzie potem do /api/buildings/{id} i do CSV, a klucz
+    -- z sekwencji nie przezywa ponownego importu (pulapka 21 w AGENTS.md). Dla porzadku takze
+    -- tie-breaker sortowania jest po osm_id — inaczej kolejnosc budynkow o rownej powierzchni
+    -- zmienialaby sie po kazdym imporcie. Zlaczenia w podzapytaniu zostaja na wewnetrznym b.id.
+    SELECT b.osm_id::bigint                     AS id,
            round(b.area_m2::numeric, 1)::float8 AS area_m2,
            ST_X(b.centroid)                     AS lng,
            ST_Y(b.centroid)                     AS lat,
@@ -57,7 +64,7 @@ WITH stats AS (
            ) AS nr_dzialki
     FROM osm_buildings b
     WHERE b.registry_matches > 0 AND b.geom && {_ENVELOPE}
-    ORDER BY b.area_m2 DESC, b.id
+    ORDER BY b.area_m2 DESC, id
     LIMIT %(limit)s
 )
 SELECT stats.total,
