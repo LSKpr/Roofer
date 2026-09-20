@@ -28,8 +28,14 @@ class Settings(BaseSettings):
     imagery_wms_layer: str = "Raster"
     imagery_timeout_s: float = 10.0
     imagery_max_parallel: int = 4
-    imagery_cache_tiles: int = 256
-    imagery_cache_mb: int = 64
+    # Cache kafli i wycinkow dachow w pamieci procesu. Rozmiar wziety z pomiaru, nie z sufitu:
+    # obszar demo (okolice Zwolenia, ~5 km²) to na zoomach 13-19 dokladnie 3 176 kafli po srednio
+    # 113 KB, czyli ~349 MB. Przy slabej sieci na miejscu cache jest jedyna rzecza, ktora trzyma
+    # ortofoto na ekranie, a rozgrzewa sie go OGLADAJAC obszar w przegladarce — nie skryptem,
+    # bo skryptowe przemiatanie siatki to harvesting, ktory regulamin GUGiK wyklucza (patrz
+    # naglowek app/imagery.py). Restart procesu czysci pamiec i trzeba rozgrzac ponownie.
+    imagery_cache_tiles: int = 6000
+    imagery_cache_mb: int = 768
 
     # Wyszukiwanie miejsc (Nominatim OSM). Regulamin wymaga User-Agenta, ktory identyfikuje
     # aplikacje i pozwala sie z nami skontaktowac; anonimowe zapytania sa blokowane.

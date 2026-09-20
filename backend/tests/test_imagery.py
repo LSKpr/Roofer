@@ -314,3 +314,42 @@ async def test_the_http_client_is_created_once_and_shared() -> None:
     await client.aclose()
 
     assert first is second
+
+
+def test_the_same_roof_crop_is_served_from_cache() -> None:
+    """Siatka miniatur na liscie niezgloszonych dachow wraca do tych samych kadrow przy kazdym
+    otwarciu panelu i przy kazdym ruchu suwaka progu — bez cache'u ta sama garsc zdjec szlaby
+    do GUGiK po kilka razy w ciagu minuty."""
+    seen, handler = recording_handler(png_response)
+    pool = FakePool(row=(1000.0, 2000.0, 1020.0, 2010.0))
+
+    with TestClient(app_with(handler, pool=pool)) as client:
+        first = client.get(ROOF_PATH, params={"size": 128})
+        second = client.get(ROOF_PATH, params={"size": 128})
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert second.content == PNG
+    assert len(seen) == 1  # drugie zapytanie nie dotarlo do GUGiK
+
+
+def test_a_different_crop_size_is_a_different_image() -> None:
+    """Miniatura 128 px i kadr w karcie 384 px to dwa rozne obrazy tego samego dachu, wiec rozmiar
+    musi byc czescia klucza — inaczej karta dostalaby miniature rozciagnieta na caly kadr."""
+    seen, handler = recording_handler(png_response)
+    pool = FakePool(row=(1000.0, 2000.0, 1020.0, 2010.0))
+
+    with TestClient(app_with(handler, pool=pool)) as client:
+        client.get(ROOF_PATH, params={"size": 128})
+        client.get(ROOF_PATH, params={"size": 384})
+
+    assert [request.url.params["WIDTH"] for request in seen] == ["128", "384"]
+
+
+def test_the_cache_is_sized_from_the_measured_demo_area() -> None:
+    """Obszar demo (~5 km² pod Zwoleniem) to na zoomach 13-19 dokladnie 3 176 kafli po srednio
+    113 KB, czyli ~349 MB — zmierzone przez to proxy. Cache mniejszy od tej liczby znaczy, ze
+    przy slabej sieci na miejscu ortofoto zniknie z mapy w polowie pokazu."""
+    settings = Settings(database_url="postgresql://unused")
+
+    assert settings.imagery_cache_tiles >= 3176
+    assert settings.imagery_cache_mb >= 349

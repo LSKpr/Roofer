@@ -281,6 +281,50 @@ to samo, innymi słowami: że model porównuje wygląd pokrycia na zdjęciu sate
 „właściciel zataił" — i wprost, że to jest **lista do sprawdzenia w terenie, nie lista ustaleń**.
 Zdania nie znikają, gdy lista jest pusta, bo dotyczą sekcji, nie wierszy.
 
+### Demo przy słabej sieci
+
+Aplikacja ciągnie z internetu trzy rzeczy i **żadnej z nich nie wolno pobrać hurtem**:
+
+- **ortofoto GUGiK** — AccessConstraints z ich GetCapabilities (sprawdzone 2026-09-20): „Wykorzystanie
+  usługi nie podlega żadnym ograniczeniom **z wyłączeniem automatycznego pobierania i kolekcjonowania
+  obrazów (tzw. harvesting)**";
+- **kafle OSM i CARTO** — polityka użycia kafli OSM zabrania masowego pobierania;
+- **kafle Google Satellite**, na które patrzy model — ToS dostawcy, o czym pisze też README autora
+  modelu.
+
+Dlatego offline robimy **cache'em rozgrzanym przez oglądanie**, a nie skryptem. Skryptowe
+przemiatanie siatki kafli jest tym samym harvestingiem, tylko schowanym za pętlą, i tak samo łamie
+regulamin — a ten projekt sprzedaje się tym, że nie naciąga danych.
+
+**Rozmiar cache'u jest zmierzony, nie zgadnięty.** Obszar demo (okolice Zwolenia, `INITIAL_CENTER`
+= 21,08 / 51,25, ~5 km²) na zoomach 13-19 to **3 176 kafli po średnio 113 KB, czyli ~349 MB** —
+policzone i zmierzone przez nasze własne proxy. Stąd `IMAGERY_CACHE_TILES=6000`
+i `IMAGERY_CACHE_MB=768`.
+
+**Procedura rozgrzewania, w tej kolejności:**
+
+1. Uruchom wszystko przy dobrej sieci i **nie restartuj już backendu ani usługi modelu** — oba
+   cache'e są w pamięci procesu.
+2. Przełącz podkład na `Aerial` i przejedź mapą po obszarze demo na tych zoomach, które będziesz
+   pokazywać. To użytkownik patrzący na mapę, czyli dokładnie to, na co regulamin pozwala.
+3. Puść analizę modelem na obszarze demo. Rozgrzewa to trzy rzeczy naraz: kafle Google w usłudze
+   modelu (cache 1 GiB, TTL 12 h), oceny w naszym dostawcy i wycinki dachów do siatki miniatur.
+4. Na demo **nie rób twardego odświeżenia** (Ctrl+Shift+R). Wyrzuca cache przeglądarki, w którym
+   siedzą kafle OSM i miniatury dachów — zwykłe F5 ich nie tyka.
+
+Wycinki dachów **są teraz cache'owane** (`ImageryClient.roof`), co jest zmianą wobec pierwszej wersji
+modułu. Wtedy kadr był jednorazowy: jeden budynek, jedna karta. Odkąd lista niezgłoszonych pokazuje
+siatkę 25 miniatur, ten sam kadr wraca przy każdym otwarciu panelu i każdym ruchu suwaka progu.
+Rozmiar jest częścią klucza, bo miniatura (128 px) i kadr w karcie (384 px) to dwa różne obrazy.
+
+Gdyby kiedyś potrzebne było **prawdziwe** offline, legalna droga istnieje i nie jest nią WMS: GUGiK
+wydaje te same zdjęcia jako **dane otwarte do pobrania** (arkusze GeoTIFF, ~36-46 MB przy 0,25 m,
+~5,2 km² na arkusz). Narzędzia do tego są w historii gita na branchu `legacy`
+(`legacy/scripts/crop_roof.py` czyta oficjalny indeks rozdzielczości). Trzeba by doinstalować
+`rasterio` i dopisać endpoint cinający arkusze na kafle. Podkład wektorowy offline to osobna sprawa:
+albo ekstrakt Protomaps/OpenMapTiles (rozpowszechniany właśnie do self-hostingu), albo podkład
+zbudowany z naszych własnych kafli budynków z PostGIS — bez ani jednego cudzego kafla.
+
 ### Warstwa wizualna: dowód, rozkład i widoczny postęp
 
 Trzy rzeczy dodane po to, żeby wynik modelu dał się **zobaczyć**, a nie tylko przeczytać. Każda

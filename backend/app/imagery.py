@@ -239,8 +239,25 @@ class ImageryClient:
         return payload
 
     async def roof(self, bbox: Bbox, size: int) -> bytes:
-        """Wycinek dachu nie idzie do cache: kadr jest jednorazowy, a obrazy sa duze."""
-        return await self.fetch(square_bbox(bbox), size, size)
+        """Wycinek dachu tez idzie do cache — i to jest zmiana wobec pierwszej wersji tego modulu.
+
+        Wtedy kadr byl naprawde jednorazowy: jeden budynek, jedna karta, jedno zdjecie. Odkad lista
+        niezgloszonych dachow pokazuje siatke miniatur, ten sam kadr wraca przy kazdym otwarciu
+        panelu i przy kazdym przesunieciu suwaka progu, ktore zmienia dlugosc listy — a dachy
+        z gory listy siedza w niej praktycznie zawsze. Bez cache'u ta sama garsc zdjec szlaby do
+        GUGiK po kilka razy w ciagu minuty, czyli dokladnie tego, czego ogranicznik ma unikac.
+
+        Rozmiar jest czescia klucza, bo miniatura (128 px) i kadr w karcie (384 px) to dwa rozne
+        obrazy tego samego dachu.
+        """
+        square = square_bbox(bbox)
+        key = ("roof", square, size)
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached
+        payload = await self.fetch(square, size, size)
+        self.cache.put(key, payload)
+        return payload
 
     async def aclose(self) -> None:
         client, self._client = self._client, None
